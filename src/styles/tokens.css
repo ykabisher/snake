@@ -1,0 +1,43 @@
+/**
+ * Design tokens. Every colour, radius and font in the game comes from here —
+ * change the look of the whole thing from this file.
+ *
+ * The game commits to one visual world (a sunlit garden bed at night) rather
+ * than following the viewer's light/dark setting, so every colour is painted
+ * explicitly and there is no theme media query.
+ */
+:root {
+  /* ground — deep pine, the frame around the board */
+  --pine-900: #0b2e2a;
+  --pine-800: #0f3a34;
+  --pine-700: #14493f;
+  --pine-600: #1b6355;
+
+  /* board — warm soil, also the light text colour */
+  --sand: #f3e3c3;
+  --ink: #fbf3e2;
+  --ink-soft: #c8dcd2;
+
+  /* accent + semantics */
+  --marigold: #f5a524;
+  --marigold-deep: #d9821a;
+  --mint: #5fd9a4;
+  --mint-deep: #2fae7a;
+  --coral: #e85d42;
+  --sky: #57b6f0;
+
+  /* shape */
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 24px;
+
+  /* type */
+  --font-display: "Suez One", "Heebo", Georgia, serif;
+  --font-ui: "Fredoka", "Heebo", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* spacing rhythm */
+  --gap-xs: 6px;
+  --gap-sm: 9px;
+  --gap-md: 16px;
+  --gap-lg: 24px;
+}
