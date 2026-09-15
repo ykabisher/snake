@@ -26,7 +26,7 @@ const DIFFICULTIES: Array<{ value: Difficulty; label: string }> = [
 
 /**
  * Built for a child who cannot read yet: every choice is a picture. Snakes are
- * little snakes, games are "1+2" and "אבג", difficulty is the world you start
+ * little snakes, games are "1+2", "3−1" and "אבג", difficulty is the world you start
  * in plus stars, and play is a big ▶. The Hebrew names stay as aria-labels.
  */
 export function Menu({

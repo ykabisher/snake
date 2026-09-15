@@ -7,6 +7,9 @@ export const ri = (a: number, b: number): number =>
 /** Random float in [a, b). */
 export const between = (a: number, b: number): number => a + Math.random() * (b - a);
 
+/** True with probability `p`. */
+export const chance = (p: number): boolean => Math.random() < p;
+
 export const pick = <T,>(arr: readonly T[]): T =>
   arr[Math.floor(Math.random() * arr.length)];
 

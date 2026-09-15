@@ -6,21 +6,34 @@ import type {
   PromptModel,
   Round,
 } from "../game/types";
-import { MAX_MATH_LEVEL, makeQuestion, wrongAnswers, type Question } from "../content/math";
+import {
+  MINUS_LEVELS,
+  PLUS_LEVELS,
+  makeQuestion,
+  wrongAnswers,
+  type Generator,
+  type Question,
+} from "../content/math";
 import { pick, shuffle } from "../game/rng";
+
+/** Pods on the board — more choices as the numbers grow. */
+const tokenCount = (level: number) => (level <= 2 ? 3 : level <= 4 ? 4 : 5);
 
 /** Solve an equation, eat the pod with the answer. */
 class MathRunner implements ModeRunner {
-  private question: Question = makeQuestion(1);
+  private question: Question;
   private solved = false;
 
+  constructor(private levels: Generator[]) {
+    this.question = makeQuestion(levels, 1);
+  }
+
   nextRound(level: number): Round {
-    this.question = makeQuestion(level);
+    this.question = makeQuestion(this.levels, level);
     this.solved = false;
-    const count = MATH_MODE.tokenCount(level);
     const tokens = shuffle([
       { label: String(this.question.answer), correct: true },
-      ...wrongAnswers(this.question.answer, count - 1, level).map((v) => ({
+      ...wrongAnswers(this.question.answer, tokenCount(level) - 1, level).map((v) => ({
         label: String(v),
         correct: false,
       })),
@@ -47,15 +60,39 @@ class MathRunner implements ModeRunner {
   }
 }
 
-export const MATH_MODE: ModeDefinition = {
-  id: "math",
-  name: "חשבון טעים",
-  icon: "🔢",
-  blurb: "פותרים תרגיל ואוכלים את המספר הנכון",
-  sample: "1+2",
-  maxLevel: MAX_MATH_LEVEL,
-  startLevel: (d: Difficulty) => [1, 3, 5][d - 1],
-  levelUpStreak: 3,
-  tokenCount: (level) => (level <= 2 ? 3 : level <= 4 ? 4 : 5),
-  create: () => new MathRunner(),
-};
+/** The math games differ only in their ladder and their menu card. */
+function mathMode(
+  card: Pick<ModeDefinition, "id" | "name" | "icon" | "blurb" | "sample">,
+  levels: Generator[],
+): ModeDefinition {
+  return {
+    ...card,
+    maxLevel: levels.length,
+    startLevel: (d: Difficulty) => [1, 3, 5][d - 1],
+    levelUpStreak: 3,
+    tokenCount,
+    create: () => new MathRunner(levels),
+  };
+}
+
+export const PLUS_MODE = mathMode(
+  {
+    id: "plus",
+    name: "חיבור טעים",
+    icon: "➕",
+    blurb: "פותרים תרגיל חיבור ואוכלים את התשובה",
+    sample: "1+2",
+  },
+  PLUS_LEVELS,
+);
+
+export const MINUS_MODE = mathMode(
+  {
+    id: "minus",
+    name: "חיסור טעים",
+    icon: "➖",
+    blurb: "פותרים תרגיל חיסור ואוכלים את התשובה",
+    sample: "3−1",
+  },
+  MINUS_LEVELS,
+);

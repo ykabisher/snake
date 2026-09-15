@@ -10,12 +10,12 @@
  * ============================================================
  */
 import type { ModeDefinition, ModeId } from "../game/types";
-import { MATH_MODE } from "./mathMode";
+import { MINUS_MODE, PLUS_MODE } from "./mathMode";
 import { SPELL_MODE } from "./spellMode";
 
-export const MODES: ModeDefinition[] = [MATH_MODE, SPELL_MODE];
+export const MODES: ModeDefinition[] = [PLUS_MODE, MINUS_MODE, SPELL_MODE];
 
-export const DEFAULT_MODE_ID: ModeId = MATH_MODE.id;
+export const DEFAULT_MODE_ID: ModeId = PLUS_MODE.id;
 
 export function getMode(id: ModeId): ModeDefinition {
   return MODES.find((m) => m.id === id) ?? MODES[0];

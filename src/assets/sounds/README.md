@@ -14,6 +14,7 @@ keeps its synthesised sound, so every file is optional.
 | `levelDown.*` | Level eased down (keep it gentle, not a "fail" sound) |
 | `gameOver.*` | Ran into your own tail |
 | `tap.*` | Menu buttons, sound toggle |
+| `turn.*` | A swipe or arrow key was heard (keep it tiny and quiet) |
 
 - Formats: `.mp3` (plays everywhere — prefer it), `.ogg`, `.wav`, `.m4a`.
   Some older iPhones/iPads can't play `.ogg`; those cues fall back to the synth.

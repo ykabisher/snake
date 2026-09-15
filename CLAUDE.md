@@ -1,8 +1,9 @@
 # נחש חכם — Smart Snake
 
-A Hebrew educational Snake game for a 6-year-old. Two modes today: solve an
-equation and eat the answer, or collect the letters of a word in order. The UI
-is Hebrew and RTL; the code and comments are English.
+A Hebrew educational Snake game for a 6-year-old. Three games today: an
+addition game (`1+2`) and a subtraction game (`3−1`) — solve the equation and
+eat the answer — and a spelling game (`אבג`) — collect the letters of a word in
+order. The UI is Hebrew and RTL; the code and comments are English.
 
 **Live page:** https://claude.ai/artifact/Q6UCiEGgNkjZvbFWLKgcwx
 **GitHub Pages:** https://ykabisher.github.io/snake/ — deployed by
@@ -51,13 +52,13 @@ index.html ──> src/main.tsx ──> src/App.tsx
                     │            ├─> fx.ts        (particles, shake, floats)
                     │            ├─> ambient.ts   (drifting motes, wandering critters)
                     │            ├─> album.ts     (sticker awards)
-                    │            ├─> audio.ts     (WebAudio, no files)
+                    │            ├─> audio.ts     (WebAudio synth + inlined sound files)
                     │            └─> input.ts     (keys, swipe)
                     │
              src/content/worlds.ts  (one world per level: ground, pods, stickers)
                     │
-             src/modes/index.ts  (registry)
-                    ├─> mathMode.ts  ──> src/content/math.ts
+             src/modes/index.ts  (registry: PLUS_MODE, MINUS_MODE, SPELL_MODE)
+                    ├─> mathMode.ts  ──> src/content/math.ts   (PLUS_LEVELS, MINUS_LEVELS)
                     └─> spellMode.ts ──> src/content/words.ts
 ```
 
@@ -66,23 +67,27 @@ index.html ──> src/main.tsx ──> src/App.tsx
 | Path | What it owns |
 |---|---|
 | `src/game/types.ts` | Every shared type. **Start here** — most features are "add a field, follow the compiler". |
+| `src/hooks/useGame.ts` | Owns the engine; remembers the menu choices (skin, mode, difficulty) in storage. |
 | `src/game/constants.ts` | Grid size, speed curve, penalties, star thresholds. Tune game feel here. |
 | `src/game/engine.ts` | Rules: movement, wrapping, collision, scoring, the level ladder, round lifecycle. |
 | `src/game/renderer.ts` | All canvas drawing: world ground (cached), pods, the snake's face and moods, gulp bulges, turn chevrons. Pure rendering — no rules. |
 | `src/game/fx.ts` | Particles, confetti, screen shake, floating score text. Cosmetic only. |
 | `src/game/ambient.ts` | Per-world drifting motes and the critter that wanders across. Cosmetic only. |
 | `src/game/album.ts` | Which stickers are owned; awards one at game over. |
+| `src/game/storage.ts` | The only `localStorage` access; never throws. `bestKey(modeId)` names each mode's high score. |
+| `src/game/rng.ts` | Every random helper (`ri`, `pick`, `shuffle`, `chance`, `seeded`...). |
 | `src/content/worlds.ts` | The worlds, one per level: tiles, scenery, pod style, critters, sticker page. Hand-editable data. |
 | `src/game/audio.ts` | Sound cues (synth fallback + optional files) and the music loop. |
 | `src/assets/sounds/` | Optional audio files, named after the cue they replace. See its README. |
 | `src/game/input.ts` | Keyboard map, swipe detection (anywhere on the play area; drag to steer without lifting). There is no on-screen D-pad. |
 | `src/content/words.ts` | The Hebrew word list. Hand-editable data. |
-| `src/content/math.ts` | The math curriculum, one generator per level. Hand-editable data. |
+| `src/content/math.ts` | The math curriculum: `PLUS_LEVELS` and `MINUS_LEVELS`, one generator per level, plus the near-miss wrong answers. Hand-editable data. |
 | `src/content/skins.ts` | Snake skins. Hand-editable data. |
-| `src/modes/` | Game modes + the registry. |
-| `src/ui/` | React components. Presentational — no game logic. |
+| `src/modes/` | Game modes + the registry. `mathMode.ts` builds both equation games from one runner. |
+| `src/ui/` | React components. Presentational — no game logic. Icons for the word-free buttons are in `icons.tsx`. |
 | `src/styles/tokens.css` | Every colour, radius and font. Change the look from here. |
 | `src/styles/app.css` | Layout and components. |
+| `scripts/make-artifact.mjs` | Turns `dist/index.html` into the shell-less `dist/artifact.html`. |
 
 ---
 
@@ -94,10 +99,17 @@ count (2-3 → 1, 4 → 2, 5+ → 3), so you never assign one. Pick an emoji a c
 recognises without being told the word.
 
 ### Add or retune a math level
-Append a generator to `MATH_LEVELS` in `src/content/math.ts`. `MAX_MATH_LEVEL`
-follows the array length automatically. If you add levels, revisit
-`MATH_MODE.startLevel` in `src/modes/mathMode.ts`, which maps the three menu
-difficulties onto the ladder.
+The addition game climbs `PLUS_LEVELS`, the subtraction game `MINUS_LEVELS`,
+both in `src/content/math.ts`. Each has six levels, one per world, easiest first
+(up to 5 → up to 10 → teens without crossing ten → crossing ten → three numbers
+→ tens). Keep each ladder to its own operator. Append or edit a generator;
+`maxLevel` follows the array length automatically. If you add levels, revisit
+`startLevel` in `mathMode()` in `src/modes/mathMode.ts`, which maps the three
+menu difficulties onto the ladder (`[1, 3, 5]`), and `tokenCount` beside it.
+
+Generators must never produce a negative answer or a × / ÷ question (see the
+rules below). Use `add(a, b)` for sums — it shows the two numbers in either
+order.
 
 ### Add a snake skin
 Append to `SKINS` in `src/content/skins.ts`. It appears in the picker
@@ -115,6 +127,8 @@ the page tint and its sticker page. Keep scenery small and unlike a pod.
 A run that completes `STICKER_MIN_COMPLETED` units earns one sticker at game
 over, drawn from the worlds it reached (favouring the furthest). Owned stickers
 live in storage under `stickers`. Add stickers to a world's `stickers` array.
+A mode can only reach as many worlds as it has levels: the math games have six
+and reach every world; spelling has three (garden, beach, snow).
 
 ### Add or replace a sound
 Drop `<cue>.mp3` into `src/assets/sounds/` (`music.mp3` is the in-run loop).
@@ -123,14 +137,26 @@ back to the synth if it is missing or undecodable. For a brand-new cue, add it
 to `synth` and `sfx` in `audio.ts` and call it from the engine.
 
 ### Add a game mode  ← the main extension point
+**Another equation game** (a new ladder of `text` → `answer` questions): add a
+`Generator[]` ladder to `src/content/math.ts`, then in `src/modes/mathMode.ts`
+call `mathMode({ id, name, icon, blurb, sample }, YOUR_LEVELS)` and register
+the result. `PLUS_MODE` and `MINUS_MODE` are both built this way.
+
+**Anything else:**
 1. Write `src/modes/<name>Mode.ts` exporting a `ModeDefinition` (copy
-   `mathMode.ts` — it is the simpler of the two).
+   `MathRunner` in `mathMode.ts` — it is the simpler runner).
 2. Add it to the `MODES` array in `src/modes/index.ts`.
 
 That is all. The menu card (its `icon` and big `sample`, e.g. "1+2"), the
-level ladder and per-mode high scores all pick it up. A mode only answers three questions:
-`nextRound(level)` (what pods go on the board), `onCorrect(level)` (what the
-right answer earns) and `decoy(level)` (a replacement wrong label).
+level ladder and per-mode high scores all pick it up. A mode's runner answers
+four questions: `nextRound(level)` (what pods go on the board and the banner),
+`onCorrect(level)` (what the right answer earns), `decoy(level)` (a replacement
+wrong label) and `prompt()` (the current banner, without advancing).
+
+The mode `id` is a storage key — the high score lives under `best_<id>` and the
+menu remembers the last-picked id — so renaming a mode resets its high score.
+A remembered id that no longer exists falls back to `DEFAULT_MODE_ID`. The
+menu cards share one row; beyond four they get cramped on a phone.
 
 If the new mode needs a banner layout the existing ones don't have, add a
 variant to `PromptModel` in `src/game/types.ts` and render it in
@@ -171,6 +197,9 @@ These exist because the player is six years old:
 - **A lane of 3 cells ahead of the head stays free of pods** (`SAFE_LANE`), so
   the player is never forced into a wrong answer.
 - **No timer.** Speed rises with level and answers, but nothing counts down.
+- **Addition and subtraction only, in separate games.** No × or ÷, and no
+  negative answers. Each math game practises one operator, so a child always
+  knows which kind of question is coming.
 - **The snake stays short.** One segment per right answer, never longer than
   `MAX_LENGTH` (15). A long tail is what ends runs.
 - **The player cannot read yet.** Menus, the pause card and the end-of-run

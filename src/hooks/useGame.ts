@@ -42,7 +42,8 @@ export function useGame(
 
   // menu selections, remembered on the device
   const [skinIndex, setSkinIndex] = useState(() => storage.get("skin", 0));
-  const [modeId, setModeId] = useState<ModeId>(() => storage.get("mode", DEFAULT_MODE_ID));
+  // a stored id from a mode that no longer exists falls back to the default
+  const [modeId, setModeId] = useState<ModeId>(() => getMode(storage.get("mode", DEFAULT_MODE_ID)).id);
   const [difficulty, setDifficulty] = useState<Difficulty>(() => storage.get("difficulty", 1 as Difficulty));
 
   useEffect(() => storage.set("skin", skinIndex), [skinIndex]);

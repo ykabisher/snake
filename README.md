@@ -1,7 +1,8 @@
 # נחש חכם — Smart Snake
 
-A Hebrew educational Snake game for a 6-year-old: solve an equation or spell a
-word by eating the right answer, across six worlds, collecting stickers.
+A Hebrew educational Snake game for a 6-year-old: solve an addition or a
+subtraction problem, or spell a word, by eating the right answer — across six
+worlds, collecting stickers.
 
 **Play:** https://ykabisher.github.io/snake/
 
