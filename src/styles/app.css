@@ -91,11 +91,12 @@ button:focus-visible {
   display: flex;
   gap: var(--gap-xs);
 }
+/* big enough for a six-year-old's finger */
 .icon-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  font-size: 18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  font-size: 30px;
   line-height: 1;
   background: var(--pine-700);
   border: 2px solid rgba(255, 255, 255, 0.08);
@@ -111,7 +112,7 @@ button:focus-visible {
   align-items: center;
   gap: 7px;
   min-width: 74px;
-  height: 44px;
+  height: 56px;
   padding: 0 12px 0 10px;
   border-radius: 999px;
   background: var(--pine-700);
@@ -903,7 +904,8 @@ button:focus-visible {
  * ------------------------------------------------------------------ */
 @media (max-height: 640px) {
   .prompt { min-height: 70px; padding: 6px 12px 8px; }
-  .stat { min-width: 64px; height: 38px; }
+  .icon-btn { width: 48px; height: 48px; font-size: 26px; }
+  .stat { min-width: 64px; height: 48px; }
   .trail { min-height: 32px; }
   .trail__world { height: 30px; }
   .trail__pip { width: 22px; height: 22px; font-size: 14px; }
