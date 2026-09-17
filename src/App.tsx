@@ -2,7 +2,7 @@ import { useRef, useState, type CSSProperties } from "react";
 import { useGame } from "./hooks/useGame";
 import { Hud } from "./ui/Hud";
 import { PromptBar } from "./ui/PromptBar";
-import { LevelTrail } from "./ui/LevelTrail";
+import { RouteTrail } from "./ui/RouteTrail";
 import { FlyingAnswer } from "./ui/FlyingAnswer";
 import { Menu } from "./ui/Menu";
 import { PauseScreen } from "./ui/PauseScreen";
@@ -10,7 +10,7 @@ import { GameOverScreen } from "./ui/GameOverScreen";
 import { StickerBook } from "./ui/StickerBook";
 import { Toast } from "./ui/Toast";
 import { isSoundOn, setSoundOn } from "./game/audio";
-import { worldFor } from "./content/worlds";
+import { worldById } from "./content/worlds";
 
 /**
  * Layout owner. The canvas stays mounted for the life of the page — the engine
@@ -46,7 +46,7 @@ export function App() {
   };
 
   // the page takes on the tint of the world being played
-  const world = worldFor(view.level);
+  const world = worldById(view.route[view.leg]);
   const tint = { "--world-glow": world.glow, "--world-ring": world.ring } as CSSProperties;
 
   return (
@@ -62,19 +62,14 @@ export function App() {
 
         <PromptBar prompt={view.prompt} roundNonce={view.roundNonce} wrongNonce={view.wrongNonce} />
 
-        <LevelTrail
-          level={view.level}
-          maxLevel={view.maxLevel}
-          streak={view.streak}
-          goal={view.streakGoal}
-        />
+        <RouteTrail route={view.route} leg={view.leg} done={view.legDone} goal={view.legGoal} />
 
         <main className="board" ref={boardRef}>
           <canvas ref={canvasRef} />
         </main>
 
-        <p className="kbd-hint">חיצים או WASD להזזת הנחש · רווח להשהיה</p>
-        <p className="swipe-hint" aria-label="מחליקים עם האצבע לכל כיוון">
+        <p className="kbd-hint">הנחש הולך אחרי העכבר · חיצים או WASD · רווח להשהיה</p>
+        <p className="swipe-hint" aria-label="הנחש הולך אחרי האצבע">
           <span className="swipe-hint__hand">👆</span>
         </p>
       </div>

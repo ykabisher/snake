@@ -7,18 +7,14 @@ export type Difficulty = 1 | 2 | 3;
 
 export type ModeId = string;
 
-/** A cell on the board. Coordinates are grid cells, not pixels. */
-export interface Cell {
+/**
+ * A point on the board, in board units: the board is GRID units wide and one
+ * unit is roughly the snake's width. Fractions are normal — nothing is on a grid.
+ */
+export interface Pt {
   x: number;
   y: number;
 }
-
-export interface Direction {
-  x: -1 | 0 | 1;
-  y: -1 | 0 | 1;
-}
-
-export type DirectionName = "up" | "down" | "left" | "right";
 
 /* ------------------------------------------------------------------ *
  * Rounds — what a mode puts on the board
@@ -128,11 +124,15 @@ export interface GameView {
   status: GameStatus;
   modeId: ModeId;
   score: number;
+  /** The math / spelling difficulty. Invisible to the player — worlds are the journey. */
   level: number;
-  maxLevel: number;
-  /** Completed units toward the next level, out of `streakGoal`. */
-  streak: number;
-  streakGoal: number;
+  /** The world ids this run travels through, in order. */
+  route: string[];
+  /** Index into `route` of the world being played. */
+  leg: number;
+  /** Completed units in this world, out of `legGoal`. */
+  legDone: number;
+  legGoal: number;
   best: number;
   newBest: boolean;
   prompt: PromptModel | null;
@@ -142,7 +142,8 @@ export interface GameView {
   wrongNonce: number;
   /** The last correct pod, for the fly-into-the-banner animation. */
   fly: FlyAnswer | null;
-  /** Set at game over. */
+  /** Set when the run is won. */
+  trophy: string | null;
   sticker: StickerResult | null;
   stats: RunStats;
 }
@@ -155,7 +156,7 @@ export interface FlyAnswer {
   y: number;
 }
 
-/** `full` means every sticker in the worlds this run reached is already owned. */
+/** `full` means every sticker in the worlds this run visited is already owned. */
 export type StickerResult = { kind: "new"; emoji: string } | { kind: "full" };
 
 export interface ToastMessage {

@@ -1,49 +1,49 @@
 import type {
-  Cell,
   Difficulty,
-  Direction,
-  DirectionName,
   FlyAnswer,
   GameView,
   ModeDefinition,
   ModeRunner,
+  Pt,
   RunStats,
   StickerResult,
   ToastMessage,
 } from "./types";
 import type { Skin } from "../content/skins";
-import { worldFor, type World } from "../content/worlds";
-import { Renderer, type Mood, type PlacedToken, type TurnCue } from "./renderer";
+import { WORLDS, type World } from "../content/worlds";
+import { Renderer, type Mood, type PlacedToken } from "./renderer";
 import { Fx } from "./fx";
 import { Ambient } from "./ambient";
+import { Snake } from "./snake";
+import { BOOST_FACTOR, BOOST_LINGER, Field, type Contact, type Obstacle, type Zone } from "./field";
 import { sfx, music } from "./audio";
 import { storage, bestKey } from "./storage";
 import { awardSticker } from "./album";
-import { pick, clamp } from "./rng";
+import { awardTrophy } from "./trophies";
+import { between, clamp, shuffle } from "./rng";
 import {
-  BASE_STEP_MS,
+  AIM_ARRIVE,
+  AIM_OVERSHOOT,
+  BASE_SPEED,
+  BUMP_COOLDOWN,
+  EAT_RADIUS,
   GRID,
-  INPUT_BUFFER,
+  HEAD_RADIUS,
   LEVEL_DOWN_STREAK,
   MAX_LENGTH,
+  MAX_SPEED,
   MIN_LENGTH,
-  MIN_STEP_MS,
   SAFE_LANE,
+  SEGMENT_GAP,
+  SPEED_PER_CORRECT,
+  SPEED_PER_LEVEL,
   START_LENGTH,
-  STEP_MS_PER_CORRECT,
-  STEP_MS_PER_LEVEL,
-  STICKER_MIN_COMPLETED,
-  TURN_HURRY,
+  TURN_RATE,
+  UNITS_PER_WORLD,
+  WORLDS_PER_RUN,
   WRONG_PENALTY,
   WRONG_SHRINK,
 } from "./constants";
-
-const DIRECTIONS: Record<DirectionName, Direction> = {
-  up: { x: 0, y: -1 },
-  down: { x: 0, y: 1 },
-  left: { x: -1, y: 0 },
-  right: { x: 1, y: 0 },
-};
 
 export interface EngineCallbacks {
   onView: (view: GameView) => void;
@@ -57,10 +57,10 @@ export interface StartOptions {
 }
 
 /**
- * The game. Owns the loop, the snake, the board and the level ladder; asks the
- * active ModeDefinition what to put on the board and what a correct answer is
- * worth. Pushes a GameView to React only when something discrete changes —
- * never per frame.
+ * The game. Owns the loop, the snake, the board and the journey through the
+ * worlds; asks the active ModeDefinition what to put on the board and what a
+ * correct answer is worth. Pushes a GameView to React only when something
+ * discrete changes — never per frame.
  */
 export class GameEngine {
   private renderer: Renderer;
@@ -71,14 +71,26 @@ export class GameEngine {
   private mode!: ModeDefinition;
   private runner!: ModeRunner;
   private skin!: Skin;
-  private world: World | null = null;
 
-  private snake: Cell[] = [];
-  private prev: Cell[] = [];
-  private direction: Direction = DIRECTIONS.right;
-  private queue: Direction[] = [];
-  private grow = 0;
+  /** The worlds this run travels through, and where along it the snake is. */
+  private route: World[] = [];
+  private leg = 0;
+  private legDone = 0;
+
+  private snake = new Snake();
+  private field = new Field();
   private tokens: PlacedToken[] = [];
+
+  /** Where the finger (or mouse) is, in board units — the head chases it. */
+  private aimAt: Pt | null = null;
+  /** The way the arrow keys last pointed, used when there is no finger. */
+  private keyAngle: number | null = null;
+  /** The head reached the finger and is gliding past before it loops back. */
+  private arrived = false;
+  private boostUntil = 0;
+  private zone: Zone | null = null;
+  private touching: Obstacle | null = null;
+  private bumpAt = -99;
 
   private level = 1;
   private score = 0;
@@ -91,30 +103,29 @@ export class GameEngine {
   private wrongStreak = 0;
   private wrongNonce = 0;
   private roundNonce = 0;
-  private peakLevel = 1;
 
   // cosmetic state handed to the renderer
   private mood: Mood = "idle";
   private moodUntil = 0;
   private gulps: number[] = [];
-  private cue: TurnCue | null = null;
   private fly: FlyAnswer | null = null;
   /** Never reset — React tells flights apart by id across runs. */
   private flyId = 0;
+  private trophy: string | null = null;
   private sticker: StickerResult | null = null;
 
-  private stepMs = BASE_STEP_MS;
-  private accumulator = 0;
+  private speed = BASE_SPEED;
   private lastFrame = 0;
   private time = 0;
-  private deadAt = 0;
+  private overAt = 0;
   private raf = 0;
   private roundTimer: number | null = null;
   private overTimer: number | null = null;
 
   private running = false;
   private paused = false;
-  private dead = false;
+  /** The journey is finished and the celebration is playing. */
+  private over = false;
   private toastId = 0;
 
   constructor(canvas: HTMLCanvasElement, private cb: EngineCallbacks) {
@@ -129,7 +140,7 @@ export class GameEngine {
    * ---------------------------------------------------------------- */
 
   start(opts: StartOptions): void {
-    this.clearRoundTimer();
+    this.clearTimers();
     this.mode = opts.mode;
     this.runner = opts.mode.create();
     this.skin = opts.skin;
@@ -138,12 +149,19 @@ export class GameEngine {
     this.prevBest = storage.get(bestKey(opts.mode.id), 0);
     this.best = this.prevBest;
 
-    const mid = Math.floor(GRID / 2);
-    this.snake = Array.from({ length: START_LENGTH }, (_, i) => ({ x: mid - i, y: mid }));
-    this.prev = this.snake.map((c) => ({ ...c }));
-    this.direction = DIRECTIONS.right;
-    this.queue = [];
-    this.grow = 0;
+    this.route = shuffle([...WORLDS]).slice(0, WORLDS_PER_RUN);
+    this.leg = 0;
+    this.legDone = 0;
+
+    this.snake.reset(GRID / 2 - 2, GRID / 2, 0, START_LENGTH);
+    this.aimAt = null;
+    this.keyAngle = null;
+    this.arrived = false;
+    this.boostUntil = 0;
+    this.zone = null;
+    this.touching = null;
+    this.bumpAt = -99;
+    this.tokens = [];
 
     this.score = 0;
     this.correct = 0;
@@ -151,53 +169,52 @@ export class GameEngine {
     this.completed = 0;
     this.streak = 0;
     this.wrongStreak = 0;
-    this.peakLevel = this.level;
     this.mood = "idle";
     this.moodUntil = 0;
     this.gulps = [];
-    this.cue = null;
     this.fly = null;
+    this.trophy = null;
     this.sticker = null;
     this.fx.clear();
 
     this.running = true;
     this.paused = false;
-    this.dead = false;
+    this.over = false;
     this.time = 0;
-    this.accumulator = 0;
 
     this.updateSpeed();
     this.resize();
-    this.world = null;
-    this.applyWorld(false);
+    this.enterWorld(false);
     this.beginRound();
     this.publish();
     sfx.start();
     music.start();
 
     this.lastFrame = performance.now();
+    cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(this.loop);
   }
 
   stop(): void {
     this.running = false;
     this.paused = false;
-    this.dead = false;
+    this.over = false;
     cancelAnimationFrame(this.raf);
-    this.clearRoundTimer();
+    this.clearTimers();
     music.stop();
     this.publish("menu");
   }
 
   destroy(): void {
     cancelAnimationFrame(this.raf);
-    this.clearRoundTimer();
+    this.clearTimers();
     music.stop();
   }
 
   setPaused(paused: boolean): void {
-    if (!this.running || this.dead) return;
+    if (!this.running || this.over || this.paused === paused) return;
     this.paused = paused;
+    this.aimAt = null;
     if (paused) music.pause();
     else music.resume();
     this.publish();
@@ -212,7 +229,7 @@ export class GameEngine {
   }
 
   get isPlaying(): boolean {
-    return this.running && !this.dead;
+    return this.running && !this.over;
   }
 
   /** Fit the board to `available` CSS pixels (the shorter side of its box). */
@@ -222,14 +239,24 @@ export class GameEngine {
     this.ambient.resize(this.renderer.size);
   }
 
-  /** Move to the world of the current level; `reveal` spreads it from the head. */
-  private applyWorld(reveal: boolean): void {
-    const world = worldFor(this.level);
-    if (world === this.world) return;
-    this.world = world;
-    const head = this.renderer.cellCenter(this.snake[0]);
-    this.renderer.setWorld(world, reveal ? { ...head, at: this.time } : null);
+  /** Arrive in the current world of the route, with a fresh random layout. */
+  private enterWorld(reveal: boolean): void {
+    const world = this.route[this.leg];
+    const head = this.snake.head;
+    this.renderer.setWorld(world, reveal ? { ...this.renderer.px(head), at: this.time } : null);
     this.ambient.setWorld(world, this.renderer.size);
+    this.zone = null;
+
+    // keep the snake, the way ahead of it and any pods clear of the new things
+    const dir = this.snake.dir;
+    const keepOut = [
+      { ...head, r: 2.4 },
+      ...[1.5, 2.5, 3.5, 4.5].map((d) => ({ x: head.x + dir.x * d, y: head.y + dir.y * d, r: 1.3 })),
+      ...this.snake.points(SEGMENT_GAP).map((p) => ({ ...p, r: 0.9 })),
+      ...this.tokens.map((t) => ({ x: t.x, y: t.y, r: 1 })),
+    ];
+    this.field.layout(world, keepOut, head, this.time);
+    this.toast(`${world.icon} ${world.name}!`, "info");
   }
 
   private setMood(mood: Mood, seconds: number): void {
@@ -241,18 +268,30 @@ export class GameEngine {
    * Input
    * ---------------------------------------------------------------- */
 
-  turn(name: DirectionName): void {
-    const next = DIRECTIONS[name];
-    if (!next || !this.running || this.paused || this.dead) return;
-    const last = this.queue.length > 0 ? this.queue[this.queue.length - 1] : this.direction;
-    // ignore reversals (instant self-collision) and no-op repeats
-    if (next.x === -last.x && next.y === -last.y) return;
-    if (next.x === last.x && next.y === last.y) return;
-    if (this.queue.length >= INPUT_BUFFER) return;
-    this.queue.push(next);
-    // instant acknowledgement: chevrons from the head, eyes turn, a soft swish
-    this.cue = { dir: next, at: this.time };
-    sfx.turn();
+  /** The finger (or mouse) is at this page position. */
+  aim(clientX: number, clientY: number): void {
+    if (!this.isPlaying || this.paused) return;
+    const p = this.renderer.toBoard(clientX, clientY);
+    const m = 0.4;
+    this.aimAt = { x: clamp(p.x, m, GRID - m), y: clamp(p.y, m, GRID - m) };
+    this.keyAngle = null;
+  }
+
+  /** The finger lifted — glide straight on. */
+  release(): void {
+    this.aimAt = null;
+  }
+
+  /** A finger touched down: a tiny swish says the snake heard it. */
+  touchDown(): void {
+    if (this.isPlaying && !this.paused) sfx.turn();
+  }
+
+  /** Arrow keys: head this way (radians). */
+  steer(angle: number): void {
+    if (!this.isPlaying || this.paused) return;
+    this.keyAngle = angle;
+    this.aimAt = null;
   }
 
   /* ---------------------------------------------------------------- *
@@ -261,14 +300,14 @@ export class GameEngine {
 
   private beginRound(): void {
     const round = this.runner.nextRound(this.level);
-    this.tokens = [];
     const placed: PlacedToken[] = [];
+    this.tokens = [];
     for (const token of round.tokens) {
-      const cell = this.freeCell(placed);
-      if (!cell) break;
+      const spot = this.freeSpot(placed);
+      if (!spot) break;
       // a small stagger, so the pods pop in one after another
       placed.push({
-        ...cell,
+        ...spot,
         label: token.label,
         correct: token.correct,
         born: this.time + placed.length * 0.07,
@@ -278,39 +317,40 @@ export class GameEngine {
     this.roundNonce++;
   }
 
-  /** A cell not under the snake, another pod, or the lane ahead of the head. */
-  private freeCell(alsoTaken: PlacedToken[]): Cell | null {
-    const taken = new Set<string>();
-    const key = (x: number, y: number) => `${x},${y}`;
-    for (const s of this.snake) taken.add(key(s.x, s.y));
-    for (const t of this.tokens) taken.add(key(t.x, t.y));
-    for (const t of alsoTaken) taken.add(key(t.x, t.y));
-
-    const head = this.snake[0];
-    for (let i = 1; i <= SAFE_LANE; i++) {
-      taken.add(
-        key(
-          (head.x + this.direction.x * i + GRID) % GRID,
-          (head.y + this.direction.y * i + GRID) % GRID,
-        ),
-      );
+  /**
+   * A spot for a pod: clear of obstacles and mover routes, other pods, the
+   * snake's body, and the lane straight ahead of the head.
+   */
+  private freeSpot(alsoTaken: PlacedToken[]): Pt | null {
+    const head = this.snake.head;
+    const dir = this.snake.dir;
+    const body = this.snake.points(SEGMENT_GAP);
+    const others = [...this.tokens, ...alsoTaken];
+    const m = 0.9;
+    for (let tries = 0; tries < 300; tries++) {
+      const p = { x: between(m, GRID - m), y: between(m, GRID - m) };
+      if (!this.field.isClear(p, 1)) continue;
+      if (others.some((t) => Math.hypot(t.x - p.x, t.y - p.y) < 1.7)) continue;
+      if (body.some((b) => Math.hypot(b.x - p.x, b.y - p.y) < 1.1)) continue;
+      const dx = p.x - head.x;
+      const dy = p.y - head.y;
+      if (Math.hypot(dx, dy) < 2) continue;
+      const ahead = dx * dir.x + dy * dir.y;
+      const side = Math.abs(-dx * dir.y + dy * dir.x);
+      if (ahead > 0 && ahead < SAFE_LANE && side < 1.3) continue;
+      return p;
     }
-
-    const free: Cell[] = [];
-    for (let y = 0; y < GRID; y++) {
-      for (let x = 0; x < GRID; x++) if (!taken.has(key(x, y))) free.push({ x, y });
-    }
-    return free.length > 0 ? pick(free) : null;
+    return null;
   }
 
   private replaceDecoy(token: PlacedToken): void {
     const index = this.tokens.indexOf(token);
     if (index < 0) return;
     this.tokens.splice(index, 1);
-    const cell = this.freeCell([]);
-    if (!cell) return;
+    const spot = this.freeSpot([]);
+    if (!spot) return;
     this.tokens.push({
-      ...cell,
+      ...spot,
       label: this.runner.decoy(this.level),
       correct: false,
       born: this.time,
@@ -322,38 +362,32 @@ export class GameEngine {
    * ---------------------------------------------------------------- */
 
   private updateSpeed(): void {
-    this.stepMs = clamp(
-      BASE_STEP_MS - this.level * STEP_MS_PER_LEVEL - this.correct * STEP_MS_PER_CORRECT,
-      MIN_STEP_MS,
-      BASE_STEP_MS + 20,
+    this.speed = clamp(
+      BASE_SPEED + this.level * SPEED_PER_LEVEL + this.correct * SPEED_PER_CORRECT,
+      BASE_SPEED,
+      MAX_SPEED,
     );
   }
 
-  /** Ratchet the level up on a streak of completed units, down on repeated misses. */
+  /**
+   * Ratchet the question difficulty up on a streak of completed units, down on
+   * repeated misses. Quietly — the worlds are the progress the player sees.
+   */
   private adjustLevel(): void {
     if (this.streak >= this.mode.levelUpStreak && this.level < this.mode.maxLevel) {
       this.level++;
-      this.peakLevel = Math.max(this.peakLevel, this.level);
       this.streak = 0;
       this.wrongStreak = 0;
-      sfx.levelUp();
-      this.fx.confetti(this.renderer.size);
-      this.applyWorld(true);
-      const world = worldFor(this.level);
-      this.toast(`${world.icon} ${world.name}!`, "info");
     } else if (this.wrongStreak >= LEVEL_DOWN_STREAK && this.level > 1) {
       this.level--;
       this.wrongStreak = 0;
       this.streak = 0;
-      sfx.levelDown();
-      this.applyWorld(true);
-      this.toast("קצת יותר קל 🙂", "warn");
     }
     this.updateSpeed();
   }
 
   private onCorrect(token: PlacedToken): void {
-    const { x, y } = this.renderer.cellCenter(token);
+    const { x, y } = this.renderer.px(token);
     this.correct++;
     this.wrongStreak = 0;
     this.fx.burst(x, y, ["#5FD9A4", "#F5A524", "#F7C948", "#FFFFFF"], 22);
@@ -363,13 +397,13 @@ export class GameEngine {
 
     const result = this.runner.onCorrect(this.level);
     this.score += result.points;
-    // growth stops at MAX_LENGTH, counting segments still waiting to grow
-    this.grow = clamp(this.grow + result.grow, 0, Math.max(0, MAX_LENGTH - this.snake.length));
+    this.snake.length = Math.min(MAX_LENGTH, this.snake.length + result.grow);
     this.fx.float(x, y, `+${result.points}`, "#5FD9A4");
 
     if (result.advanced) {
       this.completed++;
       this.streak++;
+      this.legDone++;
     }
 
     if (result.celebrate) {
@@ -382,11 +416,24 @@ export class GameEngine {
 
     if (result.advanced) this.adjustLevel();
 
+    if (result.advanced && this.legDone >= UNITS_PER_WORLD) {
+      if (this.leg + 1 >= this.route.length) {
+        this.finish();
+        return;
+      }
+      this.tokens = [];
+      this.leg++;
+      this.legDone = 0;
+      sfx.world();
+      this.fx.confetti(this.renderer.size);
+      this.enterWorld(true);
+    }
+
     // Hold the finished banner for a beat before the next pods appear.
     if (result.delay && result.delay > 0) {
       this.tokens = [];
       this.publish();
-      this.clearRoundTimer();
+      this.clearTimers();
       this.roundTimer = window.setTimeout(() => {
         this.roundTimer = null;
         if (!this.isPlaying) return;
@@ -401,7 +448,7 @@ export class GameEngine {
   }
 
   private onWrong(token: PlacedToken): void {
-    const { x, y } = this.renderer.cellCenter(token);
+    const { x, y } = this.renderer.px(token);
     this.mistakes++;
     this.wrongStreak++;
     this.streak = 0;
@@ -413,10 +460,7 @@ export class GameEngine {
     this.fx.burst(x, y, ["#E85D42", "#FFB4A2"], 14);
     this.fx.float(x, y, "אופס", "#E85D42");
 
-    for (let i = 0; i < WRONG_SHRINK; i++) {
-      if (this.snake.length > MIN_LENGTH) this.snake.pop();
-    }
-    this.prev = this.prev.slice(0, this.snake.length);
+    this.snake.length = Math.max(MIN_LENGTH, this.snake.length - WRONG_SHRINK);
     this.score = Math.max(0, this.score - WRONG_PENALTY);
 
     this.replaceDecoy(token);
@@ -424,66 +468,119 @@ export class GameEngine {
     this.publish();
   }
 
-  private step(): void {
-    if (this.queue.length > 0) {
-      const next = this.queue.shift()!;
-      if (!(next.x === -this.direction.x && next.y === -this.direction.y)) {
-        this.direction = next;
-      }
-    }
-
-    this.prev = this.snake.map((c) => ({ ...c }));
-    const head = this.snake[0];
-    const nextHead: Cell = {
-      x: (head.x + this.direction.x + GRID) % GRID,
-      y: (head.y + this.direction.y + GRID) % GRID,
-    };
-
-    // Walls wrap. The only way to die is your own tail — and the last segment
-    // is moving out of the way this step unless the snake is growing.
-    const limit = this.grow > 0 ? this.snake.length : this.snake.length - 1;
-    for (let i = 0; i < limit; i++) {
-      if (this.snake[i].x === nextHead.x && this.snake[i].y === nextHead.y) {
-        this.gameOver();
-        return;
-      }
-    }
-
-    this.snake.unshift(nextHead);
-    if (this.grow > 0) this.grow--;
-    else this.snake.pop();
-    if (this.prev.length < this.snake.length) {
-      this.prev.push({ ...this.snake[this.snake.length - 1] });
-    }
-
-    const hit = this.tokens.find((t) => t.x === nextHead.x && t.y === nextHead.y);
-    if (hit) {
-      if (hit.correct) this.onCorrect(hit);
-      else this.onWrong(hit);
-    }
-  }
-
-  private gameOver(): void {
+  /** The last world is done: celebrate, hand out the prizes, show the finish card. */
+  private finish(): void {
     this.running = false;
-    this.dead = true;
-    this.deadAt = this.time;
-    this.clearRoundTimer();
+    this.over = true;
+    this.overAt = this.time;
+    this.aimAt = null;
+    this.tokens = [];
+    this.clearTimers();
     music.stop();
-    sfx.gameOver();
-    this.fx.shake = 1.4;
-    const head = this.snake[0];
-    const { x, y } = this.renderer.cellCenter(head);
-    this.fx.burst(x, y, ["#E85D42", "#F5A524", "#FFFFFF"], 26);
+    sfx.win();
+    this.fx.confetti(this.renderer.size);
+    this.setMood("happy", 99);
 
     this.best = Math.max(this.prevBest, this.score);
     storage.set(bestKey(this.mode.id), this.best);
-    this.sticker = this.completed >= STICKER_MIN_COMPLETED ? awardSticker(this.peakLevel) : null;
+    this.trophy = awardTrophy();
+    this.sticker = awardSticker(this.route);
 
-    // Let the crash land before the card covers the board.
+    // show the solved banner and the flying answer, then the card
+    this.publish("playing");
     this.overTimer = window.setTimeout(() => {
       this.overTimer = null;
-      if (this.dead) this.publish("over");
-    }, 700);
+      if (this.over) this.publish("over");
+    }, 1300);
+  }
+
+  /** One frame of movement: steer, glide, terrain, bumps, bites. */
+  private tick(dt: number): void {
+    const snake = this.snake;
+    this.field.update(this.time);
+
+    const effect = this.field.effectAt(snake.head);
+    if (effect.zone !== this.zone) {
+      this.zone = effect.zone;
+      if (effect.zone) {
+        sfx.zone();
+        const { x, y } = this.renderer.px(snake.head);
+        const terrain = this.route[this.leg].terrain;
+        this.fx.burst(x, y, [terrain.detail, terrain.fill], 8);
+      }
+    }
+    if (effect.boost) this.boostUntil = this.time + BOOST_LINGER;
+
+    let desired = this.keyAngle;
+    if (this.aimAt) {
+      const dx = this.aimAt.x - snake.head.x;
+      const dy = this.aimAt.y - snake.head.y;
+      const d = Math.hypot(dx, dy);
+      // reached the finger: glide on a little, then loop back around it
+      if (d < AIM_ARRIVE) this.arrived = true;
+      else if (d > AIM_OVERSHOOT) this.arrived = false;
+      desired = this.arrived ? null : Math.atan2(dy, dx);
+    }
+    if (desired !== null) snake.steer(desired, TURN_RATE * effect.turn * dt);
+
+    const boost = this.time < this.boostUntil ? BOOST_FACTOR : 1;
+    const v = this.speed * effect.speed * boost;
+    const dir = snake.dir;
+    snake.head.x += (dir.x * v + effect.drift.x) * dt;
+    snake.head.y += (dir.y * v + effect.drift.y) * dt;
+
+    const contact = this.field.resolve(snake.head, HEAD_RADIUS);
+    if (contact) this.slide(contact, desired);
+    if (contact?.obstacle !== this.touching) this.touching = contact?.obstacle ?? null;
+    snake.commit(dt);
+
+    const bite = this.tokens.find(
+      (t) => this.time >= t.born && Math.hypot(t.x - snake.head.x, t.y - snake.head.y) < EAT_RADIUS,
+    );
+    if (bite) {
+      if (bite.correct) this.onCorrect(bite);
+      else this.onWrong(bite);
+    }
+  }
+
+  /**
+   * Something is in the way: turn the heading along its edge, so the snake
+   * slides around it instead of stopping. A fresh, head-on hit is a "bonk".
+   */
+  private slide(contact: Contact, desired: number | null): void {
+    const snake = this.snake;
+    const dir = snake.dir;
+    const into = -(dir.x * contact.nx + dir.y * contact.ny);
+    const fresh = contact.obstacle !== null && contact.obstacle !== this.touching;
+    if (fresh && (into > 0.4 || contact.obstacle!.path) && this.time - this.bumpAt > BUMP_COOLDOWN) {
+      this.bump(contact);
+    }
+    if (into <= 0) return;
+
+    let tx = -contact.ny;
+    let ty = contact.nx;
+    let side = dir.x * tx + dir.y * ty;
+    // dead-on: slide toward whichever side the finger is on
+    if (Math.abs(side) < 0.05 && desired !== null) side = Math.cos(desired) * tx + Math.sin(desired) * ty;
+    if (side < 0) {
+      tx = -tx;
+      ty = -ty;
+    }
+    snake.heading = Math.atan2(ty, tx);
+  }
+
+  private bump(contact: Contact): void {
+    this.bumpAt = this.time;
+    sfx.bonk();
+    this.setMood("bonk", 0.45);
+    this.fx.shake = Math.max(this.fx.shake, 0.3);
+    if (contact.obstacle) contact.obstacle.hitAt = this.time;
+    const head = this.snake.head;
+    const { x, y } = this.renderer.px({
+      x: head.x - contact.nx * HEAD_RADIUS,
+      y: head.y - contact.ny * HEAD_RADIUS,
+    });
+    this.fx.burst(x, y, ["#FFFFFF", "#FFE08A"], 8);
   }
 
   /* ---------------------------------------------------------------- *
@@ -491,11 +588,12 @@ export class GameEngine {
    * ---------------------------------------------------------------- */
 
   private loop = (now: number): void => {
+    const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+
     if (!this.running || this.paused) {
-      // Let the crash settle: keep shake and particles moving for a beat.
-      if (this.dead && this.time - this.deadAt < 1.4) {
-        const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
-        this.lastFrame = now;
+      // Let the finish land: keep confetti and the happy snake moving for a beat.
+      if (this.over && this.time - this.overAt < 1.6) {
         this.time += dt;
         this.render(dt);
         this.raf = requestAnimationFrame(this.loop);
@@ -503,39 +601,34 @@ export class GameEngine {
       return;
     }
 
-    const dt = Math.min(0.05, (now - this.lastFrame) / 1000);
-    this.lastFrame = now;
     this.time += dt;
-    // a waiting turn hurries the snake into the next cell, so it lands sooner
-    this.accumulator += dt * 1000 * (this.queue.length > 0 ? TURN_HURRY : 1);
-
-    while (this.accumulator >= this.stepMs) {
-      this.accumulator -= this.stepMs;
-      this.step();
-      if (!this.running) break;
-    }
-
+    this.tick(dt);
     this.render(dt);
-    this.raf = requestAnimationFrame(this.loop);
+    if (this.running || this.over) this.raf = requestAnimationFrame(this.loop);
   };
 
   private render(dt: number): void {
     this.fx.update(dt);
     this.ambient.update(dt);
-    const mood: Mood = this.dead ? "dead" : this.time < this.moodUntil ? this.mood : "idle";
+    const head = this.snake.head;
+    let facing = this.snake.dir;
+    if (this.aimAt) {
+      const dx = this.aimAt.x - head.x;
+      const dy = this.aimAt.y - head.y;
+      const d = Math.hypot(dx, dy);
+      if (d > AIM_ARRIVE) facing = { x: dx / d, y: dy / d };
+    }
     this.renderer.draw(
       {
         snake: this.snake,
-        prev: this.prev,
-        alpha: clamp(this.accumulator / this.stepMs, 0, 1),
-        direction: this.direction,
-        facing: this.queue.length > 0 ? this.queue[this.queue.length - 1] : this.direction,
+        facing,
+        aim: this.aimAt,
         tokens: this.tokens,
+        field: this.field,
         skin: this.skin,
         time: this.time,
-        mood,
+        mood: this.time < this.moodUntil ? this.mood : "idle",
         gulps: this.gulps,
-        cue: this.cue,
       },
       this.fx,
       this.ambient,
@@ -547,7 +640,7 @@ export class GameEngine {
    * React bridge
    * ---------------------------------------------------------------- */
 
-  private clearRoundTimer(): void {
+  private clearTimers(): void {
     if (this.roundTimer !== null) {
       clearTimeout(this.roundTimer);
       this.roundTimer = null;
@@ -575,22 +668,24 @@ export class GameEngine {
 
   private publish(forceStatus?: GameView["status"]): void {
     const status: GameView["status"] =
-      forceStatus ?? (this.dead ? "over" : !this.running ? "menu" : this.paused ? "paused" : "playing");
+      forceStatus ?? (this.over ? "over" : !this.running ? "menu" : this.paused ? "paused" : "playing");
     const stats = this.stats;
     this.cb.onView({
       status,
       modeId: this.mode?.id ?? "",
       score: this.score,
       level: this.level,
-      maxLevel: this.mode?.maxLevel ?? 1,
-      streak: this.streak,
-      streakGoal: this.mode?.levelUpStreak ?? 1,
+      route: this.route.map((w) => w.id),
+      leg: this.leg,
+      legDone: this.legDone,
+      legGoal: UNITS_PER_WORLD,
       best: stats.best,
       newBest: this.score > this.prevBest && this.score > 0,
       prompt: this.runner ? this.runner.prompt() : null,
       roundNonce: this.roundNonce,
       wrongNonce: this.wrongNonce,
       fly: this.fly,
+      trophy: this.trophy,
       sticker: this.sticker,
       stats,
     });

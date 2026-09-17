@@ -5,6 +5,11 @@ addition game (`1+2`) and a subtraction game (`3−1`) — solve the equation an
 eat the answer — and a spelling game (`אבג`) — collect the letters of a word in
 order. The UI is Hebrew and RTL; the code and comments are English.
 
+The snake moves freely: its head chases the child's finger (or the mouse) and
+the body follows the exact path, so loops and circles are natural. A run is a
+journey through three random worlds — three solved units in each — ending in a
+trophy. Each world has its own obstacles (soft bumps) and a terrain twist.
+
 **Live page:** https://claude.ai/artifact/Q6UCiEGgNkjZvbFWLKgcwx
 **GitHub Pages:** https://ykabisher.github.io/snake/ — deployed by
 `.github/workflows/pages.yml` on every push to `main` (it serves the same
@@ -36,7 +41,7 @@ a real browser — a headless screenshot will render the menu but cannot play.
 `ModeDefinition` what to put on the board and what an answer is worth. React
 renders only the shell — HUD, prompt plank, overlays — and receives a small
 `GameView` snapshot from the engine **only when something discrete changes**
-(score, level, prompt, status). React never re-renders per frame. That split is
+(score, prompt, world, status). React never re-renders per frame. That split is
 the single most important thing to preserve.
 
 ```
@@ -49,13 +54,16 @@ index.html ──> src/main.tsx ──> src/App.tsx
               mirrors GameView)
                     │
              src/game/engine.ts ──> renderer.ts  (all canvas drawing)
+                    │            ├─> snake.ts     (the body as a path behind the head)
+                    │            ├─> field.ts     (obstacles, movers, terrain; layout + collision)
                     │            ├─> fx.ts        (particles, shake, floats)
                     │            ├─> ambient.ts   (drifting motes, wandering critters)
                     │            ├─> album.ts     (sticker awards)
+                    │            ├─> trophies.ts  (the trophy shelf)
                     │            ├─> audio.ts     (WebAudio synth + inlined sound files)
-                    │            └─> input.ts     (keys, swipe)
+                    │            └─> input.ts     (keys, finger / mouse aim)
                     │
-             src/content/worlds.ts  (one world per level: ground, pods, stickers)
+             src/content/worlds.ts  (the worlds: ground, pods, obstacles, terrain, stickers)
                     │
              src/modes/index.ts  (registry: PLUS_MODE, MINUS_MODE, SPELL_MODE)
                     ├─> mathMode.ts  ──> src/content/math.ts   (PLUS_LEVELS, MINUS_LEVELS)
@@ -68,18 +76,21 @@ index.html ──> src/main.tsx ──> src/App.tsx
 |---|---|
 | `src/game/types.ts` | Every shared type. **Start here** — most features are "add a field, follow the compiler". |
 | `src/hooks/useGame.ts` | Owns the engine; remembers the menu choices (skin, mode, difficulty) in storage. |
-| `src/game/constants.ts` | Grid size, speed curve, penalties, star thresholds. Tune game feel here. |
-| `src/game/engine.ts` | Rules: movement, wrapping, collision, scoring, the level ladder, round lifecycle. |
-| `src/game/renderer.ts` | All canvas drawing: world ground (cached), pods, the snake's face and moods, gulp bulges, turn chevrons. Pure rendering — no rules. |
+| `src/game/constants.ts` | Board size, snake size, steering and speed, penalties, the journey length, star thresholds. Tune game feel here. |
+| `src/game/engine.ts` | Rules: steering, sliding and bumps, terrain effects, eating, scoring, the difficulty ladder, the journey through worlds, round lifecycle. |
+| `src/game/snake.ts` | The snake as geometry: head position and heading, the trail it left, body points along it. No rules. |
+| `src/game/field.ts` | Obstacles (still and moving) and terrain patches: random layout that never walls anything off, mover motion, collision push-out, terrain effects. Terrain strength numbers live at its top. |
+| `src/game/renderer.ts` | All canvas drawing: world ground (cached), terrain patches, obstacles, pods, the finger ring, the snake's body, face and moods, gulp bulges. Pure rendering — no rules. |
 | `src/game/fx.ts` | Particles, confetti, screen shake, floating score text. Cosmetic only. |
 | `src/game/ambient.ts` | Per-world drifting motes and the critter that wanders across. Cosmetic only. |
-| `src/game/album.ts` | Which stickers are owned; awards one at game over. |
+| `src/game/album.ts` | Which stickers are owned; awards one at the finish. |
+| `src/game/trophies.ts` | The trophy list and which were won (repeats counted); awards one at the finish. |
 | `src/game/storage.ts` | The only `localStorage` access; never throws. `bestKey(modeId)` names each mode's high score. |
 | `src/game/rng.ts` | Every random helper (`ri`, `pick`, `shuffle`, `chance`, `seeded`...). |
-| `src/content/worlds.ts` | The worlds, one per level: tiles, scenery, pod style, critters, sticker page. Hand-editable data. |
+| `src/content/worlds.ts` | The eight worlds: tiles, scenery, pod style, obstacles, terrain, critters, sticker page. Hand-editable data. |
 | `src/game/audio.ts` | Sound cues (synth fallback + optional files) and the music loop. |
 | `src/assets/sounds/` | Optional audio files, named after the cue they replace. See its README. |
-| `src/game/input.ts` | Keyboard map, swipe detection (anywhere on the play area; drag to steer without lifting). There is no on-screen D-pad. |
+| `src/game/input.ts` | Arrow keys / WASD point the snake; a finger anywhere on the play area (or the mouse over it) is where the head goes. There is no on-screen D-pad. |
 | `src/content/words.ts` | The Hebrew word list. Hand-editable data. |
 | `src/content/math.ts` | The math curriculum: `PLUS_LEVELS` and `MINUS_LEVELS`, one generator per level, plus the near-miss wrong answers. Hand-editable data. |
 | `src/content/skins.ts` | Snake skins. Hand-editable data. |
@@ -100,12 +111,14 @@ recognises without being told the word.
 
 ### Add or retune a math level
 The addition game climbs `PLUS_LEVELS`, the subtraction game `MINUS_LEVELS`,
-both in `src/content/math.ts`. Each has six levels, one per world, easiest first
+both in `src/content/math.ts`. Each has six levels, easiest first
 (up to 5 → up to 10 → teens without crossing ten → crossing ten → three numbers
 → tens). Keep each ladder to its own operator. Append or edit a generator;
 `maxLevel` follows the array length automatically. If you add levels, revisit
 `startLevel` in `mathMode()` in `src/modes/mathMode.ts`, which maps the three
 menu difficulties onto the ladder (`[1, 3, 5]`), and `tokenCount` beside it.
+Levels are invisible to the player and have nothing to do with worlds — they
+only pick the questions.
 
 Generators must never produce a negative answer or a × / ÷ question (see the
 rules below). Use `add(a, b)` for sums — it shows the two numbers in either
@@ -117,18 +130,33 @@ automatically. `rainbow: true` cycles hue along the body; `glow: true` adds a
 halo.
 
 ### Add or change a world
-Edit `WORLDS` in `src/content/worlds.ts`. Level N plays in world N (wrapping if
-a mode has more levels than worlds), so the order is the level order. Each world
-sets its checkerboard tiles, scenery emoji, pod style (`topper` picks the leaf /
-ring / wrapper / bubble / shine detail drawn in `renderer.ts`), critters, motes,
-the page tint and its sticker page. Keep scenery small and unlike a pod.
+Edit `WORLDS` in `src/content/worlds.ts`; a new entry joins the random route
+automatically. Each world sets its checkerboard tiles, scenery emoji, pod style
+(`topper` picks the leaf / ring / wrapper / bubble / shine detail drawn in
+`renderer.ts`), obstacles, terrain, critters, motes, the page tint and its
+sticker page. Keep scenery small and unlike a pod, and obstacles big, solid and
+unlike a pod too.
 
-### Stickers
-A run that completes `STICKER_MIN_COMPLETED` units earns one sticker at game
-over, drawn from the worlds it reached (favouring the furthest). Owned stickers
-live in storage under `stickers`. Add stickers to a world's `stickers` array.
-A mode can only reach as many worlds as it has levels: the math games have six
-and reach every world; spelling has three (garden, beach, snow).
+- `obstacles`: `still` emoji and a `count` range, plus a `mover` emoji that
+  either patrols back and forth or orbits a spot (`motion`, `movers`).
+- `terrain`: one `kind` per world — `slow`, `boost`, `ice`, `push` or `pull` —
+  with a patch count, size range and two colours. The drawing for each kind is
+  in `renderer.ts` (`drawZones`); the strength numbers are at the top of
+  `field.ts`. A new kind needs both, plus a case in `Field.effectAt`.
+
+### The journey
+`start()` shuffles `WORLDS` and takes `WORLDS_PER_RUN` (3). `UNITS_PER_WORLD`
+(3) completed units move the snake on — the ground spreads out from its head
+and a fresh random layout pops in. Finishing the last world ends the run with
+the win card. Both numbers are in `constants.ts`; the trail under the banner
+(`src/ui/RouteTrail.tsx`) adapts to them.
+
+### Prizes
+Every finished journey awards a trophy (`trophies.ts`, stored under
+`trophies`; a new one until all are won, then repeats) and a sticker from the
+worlds visited, favouring the last (`album.ts`, stored under `stickers`). The
+album shows the trophy shelf above the sticker pages. Stars on the finish card
+count mistakes (`STAR_MISTAKES`). Quitting from the pause card wins nothing.
 
 ### Add or replace a sound
 Drop `<cue>.mp3` into `src/assets/sounds/` (`music.mp3` is the in-run loop).
@@ -148,7 +176,7 @@ the result. `PLUS_MODE` and `MINUS_MODE` are both built this way.
 2. Add it to the `MODES` array in `src/modes/index.ts`.
 
 That is all. The menu card (its `icon` and big `sample`, e.g. "1+2"), the
-level ladder and per-mode high scores all pick it up. A mode's runner answers
+difficulty ladder, the journey and per-mode high scores all pick it up. A mode's runner answers
 four questions: `nextRound(level)` (what pods go on the board and the banner),
 `onCorrect(level)` (what the right answer earns), `decoy(level)` (a replacement
 wrong label) and `prompt()` (the current banner, without advancing).
@@ -164,7 +192,8 @@ variant to `PromptModel` in `src/game/types.ts` and render it in
 
 ### Change difficulty pacing
 `ModeDefinition.levelUpStreak` (completed units in a row to level up) and
-`LEVEL_DOWN_STREAK` / the speed constants in `src/game/constants.ts`. Growth is
+`LEVEL_DOWN_STREAK` / the speed and steering constants in
+`src/game/constants.ts`. Growth is
 the `grow` each mode returns from `onCorrect` (1 segment today), capped by
 `MAX_LENGTH`.
 
@@ -178,8 +207,15 @@ the `grow` each mode returns from `onCorrect` (1 segment today), capped by
 
 These exist because the player is six years old:
 
-- **Walls wrap.** Hitting an edge is not death. The only way to lose is running
-  into your own tail.
+- **Nothing ends a run but finishing it.** The board edge is a soft wall the
+  head slides along. The snake's own body is safe to cross — loops and circles
+  are the point. A run always ends in a win.
+- **Obstacles are soft bumps.** The head can't pass, but it slides around the
+  edge; a head-on hit is a "bonk" (sound, squeezed eyes, a jiggle) that costs
+  nothing. Layouts keep `PASSAGE` between obstacles and from the edges, so no
+  spot is ever walled off, and never drop anything on or just ahead of the
+  snake. Terrain only bends the ride — every push or pull is slower than the
+  snake, so it can always steer out.
 - **A wrong answer never ends the run.** It costs two tail segments, three
   points and a red shake; the question stays and a fresh decoy respawns
   elsewhere.
@@ -190,22 +226,23 @@ These exist because the player is six years old:
   answer is in the text. Never colour-code correctness. The pod style changes
   per world, but every pod on the board shares it — and the snake's mouth opens
   for any pod ahead, right or wrong.
-- **Turns feel instant.** A swipe is acknowledged at once (chevrons from the
-  head, the eyes look, a soft swish) and a waiting turn hurries the snake into
-  the next cell (`TURN_HURRY`), so the grid never makes a child wait out a
-  whole step.
-- **A lane of 3 cells ahead of the head stays free of pods** (`SAFE_LANE`), so
+- **The head chases the finger.** Wherever the finger is (on the board or
+  off it), the head turns toward it at `TURN_RATE` and the eyes look there
+  first; a ring under the finger shows the target. Reaching the finger, it
+  glides on a little and loops back (`AIM_ARRIVE` / `AIM_OVERSHOOT`) instead of
+  knotting up. Lifting the finger lets it glide straight on.
+- **The lane ahead of the head stays free of new pods** (`SAFE_LANE`), so
   the player is never forced into a wrong answer.
 - **No timer.** Speed rises with level and answers, but nothing counts down.
 - **Addition and subtraction only, in separate games.** No × or ÷, and no
   negative answers. Each math game practises one operator, so a child always
   knows which kind of question is coming.
 - **The snake stays short.** One segment per right answer, never longer than
-  `MAX_LENGTH` (15). A long tail is what ends runs.
+  `MAX_LENGTH` (15), so it never crowds the board.
 - **The player cannot read yet.** Menus, the pause card and the end-of-run
   card are pictures, numbers and icon buttons (`src/ui/icons.tsx`) — no words.
-  Hebrew names live on as `aria-label`s. The end of a run shows only the
-  score, stars, the sticker won and confetti.
+  Hebrew names live on as `aria-label`s. The finish shows only the trophy,
+  stars, score, the sticker won and confetti.
 
 ## Conventions
 
@@ -220,8 +257,9 @@ These exist because the player is six years old:
 - `unlock()` from `audio.ts` must be called from a user gesture before any sound
   plays; menu taps and touch handlers already do it.
 - Respect `prefers-reduced-motion`: `Fx` skips particles, `Ambient` skips
-  motes and critters, the renderer skips pod bounce, glow, gulp bulges and the
-  world reveal, the answer does not fly, and the CSS disables animation.
+  motes and critters, the renderer skips pod and obstacle bounce, glow, gulp
+  bulges, terrain animation and the world reveal, the answer does not fly, and
+  the CSS disables animation. Movers still move — they are gameplay.
 - The canvas inherits the page's RTL direction; `Renderer.resize` resets it to
   LTR so "+10" does not draw as "10+".
 

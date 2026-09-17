@@ -1,7 +1,6 @@
 import type { Difficulty, ModeId } from "../game/types";
 import { SKINS, skinAt } from "../content/skins";
-import { worldFor } from "../content/worlds";
-import { MODES, getMode } from "../modes";
+import { MODES } from "../modes";
 import { unlock, sfx } from "../game/audio";
 import { ownedStickers, TOTAL_STICKERS } from "../game/album";
 import { SnakeSwatch } from "./SnakeSwatch";
@@ -26,8 +25,8 @@ const DIFFICULTIES: Array<{ value: Difficulty; label: string }> = [
 
 /**
  * Built for a child who cannot read yet: every choice is a picture. Snakes are
- * little snakes, games are "1+2", "3−1" and "אבג", difficulty is the world you start
- * in plus stars, and play is a big ▶. The Hebrew names stay as aria-labels.
+ * little snakes, games are "1+2", "3−1" and "אבג", difficulty is stars, and
+ * play is a big ▶. The Hebrew names stay as aria-labels.
  */
 export function Menu({
   onAlbum,
@@ -45,7 +44,6 @@ export function Menu({
     sfx.tap();
     fn(value);
   };
-  const mode = getMode(modeId);
 
   return (
     <div className="overlay overlay--menu">
@@ -97,7 +95,6 @@ export function Menu({
               aria-label={d.label}
               onClick={() => tap(onDifficulty)(d.value)}
             >
-              <span className="pill__world">{worldFor(mode.startLevel(d.value)).icon}</span>
               <span className="pill__stars">{"⭐".repeat(d.value)}</span>
             </button>
           ))}

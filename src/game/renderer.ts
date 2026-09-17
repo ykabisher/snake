@@ -1,51 +1,41 @@
-import type { Cell, Direction } from "./types";
+import type { Pt } from "./types";
 import type { Skin } from "../content/skins";
 import { WORLDS, type PodStyle, type World } from "../content/worlds";
 import type { Fx } from "./fx";
 import type { Ambient } from "./ambient";
-import { GRID } from "./constants";
+import type { Snake } from "./snake";
+import type { Field, Obstacle } from "./field";
+import { GRID, SEGMENT_GAP } from "./constants";
 import { hashString, seeded } from "./rng";
 
 /** Everything drawn on the canvas. Pure rendering — no game rules here. */
 
-export interface PlacedToken extends Cell {
+export interface PlacedToken extends Pt {
   label: string;
   correct: boolean;
   born: number;
 }
 
-/** The snake's face. `happy` after a right answer, `dizzy` after a wrong one. */
-export type Mood = "idle" | "happy" | "dizzy" | "dead";
-
-/** A turn was just accepted — draw chevrons from the head that way. */
-export interface TurnCue {
-  dir: Direction;
-  at: number;
-}
+/**
+ * The snake's face. `happy` after a right answer, `dizzy` after a wrong one,
+ * `bonk` for a squeeze-eyed moment after bumping into something.
+ */
+export type Mood = "idle" | "happy" | "dizzy" | "bonk";
 
 export interface Frame {
-  /** Cell positions this step. */
-  snake: Cell[];
-  /** Where each segment was on the previous step, for smooth interpolation. */
-  prev: Cell[];
-  /** 0..1 progress between the two, so the snake glides instead of ticking. */
-  alpha: number;
-  direction: Direction;
-  /** Where the player last asked to go — the eyes look there before the body turns. */
-  facing: Direction;
+  snake: Snake;
+  /** Unit vector the eyes look along — toward the finger, before the body turns. */
+  facing: Pt;
+  /** Where the finger is, in board units, or null. */
+  aim: Pt | null;
   tokens: PlacedToken[];
+  field: Field;
   skin: Skin;
   /** Seconds since the run started — drives pulses and the tongue flick. */
   time: number;
   mood: Mood;
   /** Run times of recent bites; each sends a bulge down the body. */
   gulps: number[];
-  cue: TurnCue | null;
-}
-
-interface Pt {
-  x: number;
-  y: number;
 }
 
 const FONT_STACK = "Fredoka, Heebo, sans-serif";
@@ -53,16 +43,16 @@ const EMOJI_STACK = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", 
 
 /** Seconds for a new world to spread out from the snake's head. */
 const REVEAL_S = 1.1;
-/** Body segments per second a swallowed pod travels toward the tail. */
-const GULP_SPEED = 13;
-/** Seconds the turn chevrons stay visible. */
-const CUE_S = 0.42;
+/** Board units per second a swallowed pod travels toward the tail. */
+const GULP_SPEED = 9;
+/** Spacing of the points the body is drawn through, in board units. */
+const BODY_STEP = 0.25;
 
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   /** Board edge in CSS pixels. */
   size = 300;
-  /** One grid cell in CSS pixels. */
+  /** One board unit in CSS pixels. */
   cell = 20;
   private hue = 0;
   private world: World = WORLDS[0];
@@ -115,11 +105,13 @@ export class Renderer {
       ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
     }
     this.drawBoard(frame.time);
+    this.drawZones(frame);
     this.drawMotes(ambient);
+    this.drawObstacles(frame);
     this.drawTokens(frame);
     this.drawCritter(ambient);
-    const head = this.drawSnake(frame);
-    this.drawCue(frame, head);
+    this.drawAim(frame);
+    this.drawSnake(frame);
     this.drawFx(fx);
     ctx.restore();
 
@@ -131,9 +123,16 @@ export class Renderer {
     }
   }
 
-  /** Centre of a cell, in CSS pixels. */
-  cellCenter(cell: Cell): { x: number; y: number } {
-    return { x: (cell.x + 0.5) * this.cell, y: (cell.y + 0.5) * this.cell };
+  /** A board point in CSS pixels. */
+  px(p: Pt): Pt {
+    return { x: p.x * this.cell, y: p.y * this.cell };
+  }
+
+  /** A page position (e.g. a touch) in board units. */
+  toBoard(clientX: number, clientY: number): Pt {
+    const r = this.canvas.getBoundingClientRect();
+    const k = r.width > 0 ? GRID / r.width : 0;
+    return { x: (clientX - r.left) * k, y: (clientY - r.top) * k };
   }
 
   /* ---------------------------------------------------------------- *
@@ -316,7 +315,7 @@ export class Renderer {
       const bob = this.reduced ? 0 : Math.sin(frame.time * 2.6 + phase) * cell * 0.045;
       const sway = this.reduced ? 0 : Math.sin(frame.time * 1.9 + phase) * 0.08;
       const r = cell * 0.47 * pop;
-      const { x, y } = this.cellCenter(token);
+      const { x, y } = this.px(token);
 
       // the shadow stays on the ground while the pod bobs above it
       ctx.fillStyle = "rgba(0,0,0,.18)";
@@ -426,56 +425,264 @@ export class Renderer {
   }
 
   /* ---------------------------------------------------------------- *
+   * Terrain and obstacles
+   * ---------------------------------------------------------------- */
+
+  /** Terrain patches: a soft blob on the ground with its moving detail on top. */
+  private drawZones(frame: Frame): void {
+    const { ctx, cell } = this;
+    const style = this.world.terrain;
+    const t = this.reduced ? 0 : frame.time;
+    for (const z of frame.field.zones) {
+      const grow = Math.min(1, Math.max(0, (frame.time - z.born) / 0.4));
+      if (grow <= 0) continue;
+      const pop = this.reduced ? 1 : 1 - (1 - grow) ** 3;
+      const { x, y } = this.px(z);
+      const r = z.r * cell * pop;
+
+      ctx.save();
+      this.blobPath(x, y, r, z.x * 3.1 + z.y * 1.7);
+      ctx.fillStyle = style.fill;
+      ctx.fill();
+      ctx.clip();
+      ctx.translate(x, y);
+      ctx.strokeStyle = style.detail;
+      ctx.fillStyle = style.detail;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      switch (z.kind) {
+        case "slow":
+          this.drawRipples(r, t);
+          break;
+        case "boost":
+          ctx.rotate(z.angle);
+          this.drawChevrons(r, t);
+          break;
+        case "ice":
+          this.drawIce(r, t);
+          break;
+        case "push":
+          ctx.rotate(z.angle);
+          this.drawCurrent(r, t);
+          break;
+        case "pull":
+          this.drawVortex(r, t);
+          break;
+      }
+      ctx.restore();
+    }
+  }
+
+  /** A slightly wobbly circle, the same shape every frame for the same seed. */
+  private blobPath(x: number, y: number, r: number, seed: number): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    for (let k = 0; k <= 28; k++) {
+      const a = (k / 28) * Math.PI * 2;
+      const rr = r * (1 + 0.06 * Math.sin(a * 3 + seed) + 0.04 * Math.sin(a * 5 + seed * 2));
+      if (k === 0) ctx.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+      else ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+  }
+
+  /** Puddle / soft sand: rings spreading slowly from the middle. */
+  private drawRipples(r: number, t: number): void {
+    const { ctx, cell } = this;
+    ctx.lineWidth = cell * 0.07;
+    for (let k = 0; k < 3; k++) {
+      const f = this.reduced ? 0.25 + k * 0.3 : (t * 0.4 + k / 3) % 1;
+      ctx.globalAlpha = 0.85 * (1 - f);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * (0.15 + f * 0.75), r * (0.1 + f * 0.55), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Surf / sugar rush: chevrons racing along the launch direction. */
+  private drawChevrons(r: number, t: number): void {
+    const { ctx, cell } = this;
+    const gap = cell * 0.75;
+    const w = cell * 0.32;
+    ctx.lineWidth = cell * 0.13;
+    for (let cx = -r - gap + ((t * cell * 2.2) % gap); cx < r + gap; cx += gap) {
+      ctx.globalAlpha = Math.max(0, 1 - Math.abs(cx) / r) * 0.95;
+      ctx.beginPath();
+      ctx.moveTo(cx - w, -w);
+      ctx.lineTo(cx, 0);
+      ctx.lineTo(cx - w, w);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Ice: glossy streaks and a twinkle. */
+  private drawIce(r: number, t: number): void {
+    const { ctx, cell } = this;
+    ctx.save();
+    ctx.rotate(-0.55);
+    ctx.lineWidth = cell * 0.11;
+    ctx.globalAlpha = 0.85;
+    const streaks: Array<[number, number, number]> = [
+      [-0.35, -0.55, 0.2],
+      [-0.12, -0.4, -0.05],
+      [0.3, -0.1, 0.5],
+    ];
+    for (const [y, x0, x1] of streaks) {
+      ctx.beginPath();
+      ctx.moveTo(r * x0, r * y);
+      ctx.lineTo(r * x1, r * y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 0.5 + 0.5 * Math.max(0, Math.sin(t * 2.5));
+    this.sparkle(r * 0.4, -r * 0.35, cell * 0.28);
+    ctx.globalAlpha = 1;
+  }
+
+  /** A current: rows of dashes flowing along the arrow, with one big arrowhead. */
+  private drawCurrent(r: number, t: number): void {
+    const { ctx, cell } = this;
+    const period = cell * 1.1;
+    ctx.lineWidth = cell * 0.08;
+    ctx.globalAlpha = 0.8;
+    for (let j = -2; j <= 2; j++) {
+      const y = j * r * 0.36;
+      const shift = (t * cell * 1.6 + j * cell * 0.37 + period * 10) % period;
+      ctx.beginPath();
+      for (let x = -r - period + shift; x < r; x += period) {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + cell * 0.45, y);
+      }
+      ctx.stroke();
+    }
+    const w = cell * 0.36;
+    ctx.globalAlpha = 0.95;
+    ctx.lineWidth = cell * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.6, -w);
+    ctx.lineTo(w * 0.4, 0);
+    ctx.lineTo(-w * 0.6, w);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  /** A black hole: a dark heart and spiral arms turning inward. */
+  private drawVortex(r: number, t: number): void {
+    const { ctx, cell } = this;
+    const heart = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.55);
+    heart.addColorStop(0, "rgba(0,0,0,.85)");
+    heart.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = heart;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+
+    ctx.rotate(t * 1.4);
+    ctx.lineWidth = cell * 0.1;
+    ctx.globalAlpha = 0.8;
+    for (let arm = 0; arm < 3; arm++) {
+      ctx.beginPath();
+      for (let k = 0; k <= 20; k++) {
+        const s = k / 20;
+        const a = (arm * Math.PI * 2) / 3 + s * 3.2;
+        const rr = r * (0.95 - s * 0.85);
+        if (k === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+        else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Obstacles: big emoji standing on a shadow; movers waddle, bumped ones jiggle. */
+  private drawObstacles(frame: Frame): void {
+    const { ctx, cell } = this;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const o of frame.field.obstacles) {
+      const age = frame.time - o.born;
+      const pop = this.reduced ? (age >= 0 ? 1 : 0) : springPop(age);
+      if (pop <= 0.01) continue;
+      const { x, y } = this.px(o);
+      const size = o.r * cell;
+
+      ctx.fillStyle = "rgba(0,0,0,.2)";
+      ctx.beginPath();
+      ctx.ellipse(x, y + size * 0.62, size * 0.9 * pop, size * 0.32 * pop, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(this.obstacleTilt(o, frame.time));
+      ctx.scale(pop, pop);
+      ctx.font = `${Math.round(size * 2.3)}px ${EMOJI_STACK}`;
+      ctx.fillStyle = "#000";
+      ctx.fillText(o.emoji, 0, size * 0.06);
+      ctx.restore();
+    }
+  }
+
+  private obstacleTilt(o: Obstacle, time: number): number {
+    if (this.reduced) return 0;
+    const since = time - o.hitAt;
+    const jiggle = since < 0.45 ? Math.sin(since * 38) * (1 - since / 0.45) * 0.22 : 0;
+    const waddle = o.path ? Math.sin(time * 9 + o.path.phase) * 0.1 : 0;
+    return jiggle + waddle;
+  }
+
+  /** A ring under the finger, so the child can see where the snake is headed. */
+  private drawAim(frame: Frame): void {
+    const aim = frame.aim;
+    if (!aim) return;
+    const { ctx, cell } = this;
+    const { x, y } = this.px(aim);
+    const pulse = this.reduced ? 0 : Math.sin(frame.time * 6) * 0.08;
+    const r = cell * 0.62 * (1 + pulse);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.lineWidth = cell * 0.2;
+    ctx.strokeStyle = "rgba(0,0,0,.18)";
+    ctx.stroke();
+    ctx.lineWidth = cell * 0.1;
+    ctx.strokeStyle = "rgba(255,255,255,.75)";
+    ctx.stroke();
+  }
+
+  /* ---------------------------------------------------------------- *
    * Snake
    * ---------------------------------------------------------------- */
 
-  private segmentColor(index: number, skin: Skin, dark = false): string {
-    if (skin.rainbow) return `hsl(${(index * 16 + this.hue) % 360} 84% ${dark ? 40 : 60}%)`;
+  /** `dist` is how far along the body, in board units. */
+  private segmentColor(dist: number, skin: Skin, dark = false): string {
+    if (skin.rainbow) return `hsl(${((dist / SEGMENT_GAP) * 16 + this.hue) % 360} 84% ${dark ? 40 : 60}%)`;
     return dark ? darken(skin.body) : skin.body;
   }
 
-  /** Interpolated centre of segment `i`. Snaps instead of gliding across a wrap. */
-  private lerpSegment(frame: Frame, i: number): Pt {
-    const to = frame.snake[i];
-    const from = frame.prev[i] ?? to;
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) return this.cellCenter(to);
-    return {
-      x: (from.x + dx * frame.alpha + 0.5) * this.cell,
-      y: (from.y + dy * frame.alpha + 0.5) * this.cell,
-    };
-  }
-
-  /** Skip the pair that spans a wrapped edge. */
-  private joined(a: Pt, b: Pt): boolean {
-    return Math.hypot(a.x - b.x, a.y - b.y) <= this.cell * 1.6;
-  }
-
-  /** Where along the body (in segments) each swallowed pod currently is. */
-  private gulpPositions(frame: Frame, n: number): number[] {
+  /** How far along the body (in board units) each swallowed pod currently is. */
+  private gulpPositions(frame: Frame, length: number): number[] {
     if (this.reduced) return [];
     const out: number[] = [];
     for (const at of frame.gulps) {
       const p = (frame.time - at) * GULP_SPEED;
-      if (p >= 0 && p < n - 1) out.push(p);
+      if (p >= 0 && p < length) out.push(p);
     }
     return out;
   }
 
-  private pointAlong(pts: Pt[], p: number): Pt {
-    const i = Math.floor(p);
+  /** The point `dist` units along the body. */
+  private pointAlong(pts: Pt[], dist: number): Pt {
+    const f = dist / BODY_STEP;
+    const i = Math.min(Math.floor(f), pts.length - 1);
     const a = pts[i];
     const b = pts[i + 1];
-    if (!b || !this.joined(a, b)) return a;
-    const f = p - i;
-    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    if (!b) return a;
+    const k = f - i;
+    return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
   }
 
   private strokeBody(pts: Pt[], width: (i: number) => number, color: (i: number) => string): void {
     const { ctx } = this;
     for (let i = pts.length - 1; i > 0; i--) {
-      if (!this.joined(pts[i], pts[i - 1])) continue;
       ctx.strokeStyle = color(i);
       ctx.lineWidth = width(i);
       ctx.beginPath();
@@ -485,17 +692,21 @@ export class Renderer {
     }
   }
 
-  /** Draws the body and head; returns where the head is. */
-  private drawSnake(frame: Frame): Pt {
+  /**
+   * The body is stroked tail-first through points along the head's path, so
+   * where it loops over itself the part nearer the head lies on top.
+   */
+  private drawSnake(frame: Frame): void {
     const { ctx, cell } = this;
     const { skin } = frame;
-    const pts = frame.snake.map((_, i) => this.lerpSegment(frame, i));
+    const pts = frame.snake.points(BODY_STEP).map((p) => this.px(p));
     const n = pts.length;
-    const taper = (i: number) => 1 - (i / n) * 0.42;
-    const gulps = this.gulpPositions(frame, n);
+    const length = Math.max(BODY_STEP, (n - 1) * BODY_STEP);
+    const taper = (i: number) => 1 - ((i * BODY_STEP) / length) * 0.42;
+    const gulps = this.gulpPositions(frame, length);
     const bulge = (i: number) => {
       let extra = 0;
-      for (const p of gulps) extra += cell * 0.3 * Math.max(0, 1 - Math.abs(i - 0.5 - p) / 1.4);
+      for (const p of gulps) extra += cell * 0.3 * Math.max(0, 1 - Math.abs(i * BODY_STEP - p) / 1.05);
       return extra;
     };
     const width = (i: number) => cell * 0.78 * taper(i) + bulge(i);
@@ -508,9 +719,9 @@ export class Renderer {
       ctx.shadowColor = skin.body;
       ctx.shadowBlur = cell * 0.5;
     }
-    this.strokeBody(pts, (i) => width(i) + cell * 0.12, (i) => this.segmentColor(i, skin, true));
+    this.strokeBody(pts, (i) => width(i) + cell * 0.12, (i) => this.segmentColor(i * BODY_STEP, skin, true));
     ctx.shadowBlur = 0;
-    this.strokeBody(pts, width, (i) => this.segmentColor(i, skin));
+    this.strokeBody(pts, width, (i) => this.segmentColor(i * BODY_STEP, skin));
 
     // the swallowed pod, faintly visible inside the bulge
     if (gulps.length > 0) {
@@ -528,7 +739,8 @@ export class Renderer {
     if (!skin.rainbow) {
       ctx.fillStyle = skin.spot;
       ctx.globalAlpha = 0.55;
-      for (let i = 2; i < n; i += 3) {
+      const every = Math.round((SEGMENT_GAP * 3) / BODY_STEP);
+      for (let i = Math.round((SEGMENT_GAP * 2) / BODY_STEP); i < n; i += every) {
         ctx.beginPath();
         ctx.arc(pts[i].x, pts[i].y, cell * 0.13 * taper(i), 0, Math.PI * 2);
         ctx.fill();
@@ -537,39 +749,36 @@ export class Renderer {
     }
 
     // a glossy highlight toward the light — one path, so the translucent
-    // stroke does not pile up where segments overlap
+    // stroke does not pile up where it overlaps itself
     const ox = -cell * 0.07;
     const oy = -cell * 0.1;
     ctx.strokeStyle = skin.belly;
     ctx.globalAlpha = 0.5;
     ctx.lineWidth = cell * 0.2;
     ctx.beginPath();
-    let pen = false;
-    for (let i = 0; i < Math.max(1, n - 2); i++) {
-      if (i > 0 && !this.joined(pts[i - 1], pts[i])) pen = false;
-      if (!pen) ctx.moveTo(pts[i].x + ox, pts[i].y + oy);
+    const stop = Math.max(1, n - Math.round(SEGMENT_GAP / BODY_STEP));
+    for (let i = 0; i < stop; i++) {
+      if (i === 0) ctx.moveTo(pts[i].x + ox, pts[i].y + oy);
       else ctx.lineTo(pts[i].x + ox, pts[i].y + oy);
-      pen = true;
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     this.drawHead(frame, pts[0]);
-    return pts[0];
   }
 
   /** 0..1 — how wide the mouth is open for the nearest pod straight ahead. */
   private mouthOpen(frame: Frame, head: Pt): number {
     const { cell } = this;
-    const dir = frame.direction;
+    const dir = frame.snake.dir;
     let open = 0;
     for (const t of frame.tokens) {
-      const c = this.cellCenter(t);
+      const c = this.px(t);
       const dx = (c.x - head.x) / cell;
       const dy = (c.y - head.y) / cell;
       const ahead = dx * dir.x + dy * dir.y;
       const side = Math.abs(-dx * dir.y + dy * dir.x);
-      if (ahead < -0.1 || side > 0.6) continue;
+      if (ahead < -0.1 || side > 0.7) continue;
       open = Math.max(open, Math.min(1, Math.max(0, (2.4 - ahead) / 1.6)));
     }
     return open;
@@ -578,13 +787,13 @@ export class Renderer {
   private drawHead(frame: Frame, head: Pt): void {
     const { ctx, cell } = this;
     const { skin, mood, time } = frame;
-    const dir = frame.direction;
+    const dir = frame.snake.dir;
     const lastBite = frame.gulps.length > 0 ? frame.gulps[frame.gulps.length - 1] : -99;
     const sinceBite = time - lastBite;
     const chomp = !this.reduced && sinceBite < 0.2 ? Math.sin((sinceBite / 0.2) * Math.PI) * 0.16 : 0;
     const r = cell * 0.5 * (1 + chomp);
     const angle = Math.atan2(dir.y, dir.x);
-    const gap = (mood === "dead" ? 0 : this.mouthOpen(frame, head)) * 0.62;
+    const gap = this.mouthOpen(frame, head) * 0.62;
 
     // head, cut open like a mouth when food is straight ahead
     ctx.beginPath();
@@ -665,13 +874,14 @@ export class Renderer {
         ctx.stroke();
         continue;
       }
-      if (mood === "dead") {
-        const k = er * 0.55;
+      if (mood === "bonk") {
+        // squeezed shut: > <
+        const k = er * 0.6;
+        const toward = side * k * 0.8;
         ctx.beginPath();
-        ctx.moveTo(ex - k, ey - k);
-        ctx.lineTo(ex + k, ey + k);
-        ctx.moveTo(ex + k, ey - k);
-        ctx.lineTo(ex - k, ey + k);
+        ctx.moveTo(ex + px * toward - dir.x * k, ey + py * toward - dir.y * k);
+        ctx.lineTo(ex - px * toward, ey - py * toward);
+        ctx.lineTo(ex + px * toward + dir.x * k, ey + py * toward + dir.y * k);
         ctx.stroke();
         continue;
       }
@@ -706,7 +916,7 @@ export class Renderer {
         continue;
       }
 
-      // pupils look where the player last pointed, before the body turns
+      // pupils look toward the finger, before the body turns
       const pupilX = ex + look.x * er * 0.38;
       const pupilY = ey + look.y * er * 0.38;
       ctx.fillStyle = skin.eye;
@@ -727,45 +937,6 @@ export class Renderer {
         this.sparkle(head.x + Math.cos(a) * r * 1.3, head.y - r * 0.4 + Math.sin(a) * r * 0.45, r * 0.3);
       }
     }
-  }
-
-  /** Two chevrons shooting out of the head in the direction just chosen. */
-  private drawCue(frame: Frame, head: Pt): void {
-    const cue = frame.cue;
-    if (!cue || frame.mood === "dead") return;
-    const t = (frame.time - cue.at) / CUE_S;
-    if (t < 0 || t >= 1) return;
-    const { ctx, cell } = this;
-    const d = cue.dir;
-    const px = -d.y;
-    const py = d.x;
-    const travel = this.reduced ? 0 : t * cell * 0.9;
-    const w = cell * 0.3;
-
-    ctx.save();
-    ctx.globalAlpha = 1 - t * t;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (let k = 0; k < 2; k++) {
-      const dist = cell * 0.9 + k * cell * 0.42 + travel;
-      const cx = head.x + d.x * dist;
-      const cy = head.y + d.y * dist;
-      const chevron = () => {
-        ctx.beginPath();
-        ctx.moveTo(cx - d.x * w + px * w, cy - d.y * w + py * w);
-        ctx.lineTo(cx, cy);
-        ctx.lineTo(cx - d.x * w - px * w, cy - d.y * w - py * w);
-      };
-      chevron();
-      ctx.strokeStyle = "rgba(0,0,0,.3)";
-      ctx.lineWidth = cell * 0.2;
-      ctx.stroke();
-      chevron();
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = cell * 0.11;
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- *

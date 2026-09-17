@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { GameView } from "../game/types";
-import { STAR_THRESHOLDS } from "../game/constants";
+import { STAR_MISTAKES } from "../game/constants";
 import { sfx } from "../game/audio";
 import { Confetti } from "./Confetti";
 import { HomeIcon, RetryIcon } from "./icons";
@@ -11,51 +11,52 @@ interface Props {
   onMenu: () => void;
 }
 
-function starCount(score: number): number {
-  if (score >= STAR_THRESHOLDS[1]) return 3;
-  if (score >= STAR_THRESHOLDS[0]) return 2;
-  return score > 0 ? 1 : 0;
+/** Finishing is always worth a star; fewer mistakes earn more. */
+function starCount(mistakes: number): number {
+  if (mistakes <= STAR_MISTAKES[0]) return 3;
+  if (mistakes <= STAR_MISTAKES[1]) return 2;
+  return 1;
 }
 
 /**
- * No words — the player cannot read yet. The score, the stars, the sticker
- * they won, confetti, and two picture buttons: play again, go home.
+ * The finish line of the journey. No words — the player cannot read yet: the
+ * trophy they won, the stars, the score, the sticker, confetti, and two
+ * picture buttons: play again, go home.
  */
 export function GameOverScreen({ view, onAgain, onMenu }: Props) {
-  const { sticker, score, newBest } = view;
-  const stars = starCount(score);
-  const celebrate = score > 0 || sticker?.kind === "new";
+  const { trophy, sticker, score, newBest, stats } = view;
+  const stars = starCount(stats.mistakes);
 
   useEffect(() => {
-    if (!celebrate) return;
     const t = setTimeout(() => sfx.complete(), 250);
     return () => clearTimeout(t);
-  }, [celebrate]);
+  }, []);
 
   return (
     <div className="overlay">
-      {celebrate && <Confetti />}
+      <Confetti />
       <div className="sheet sheet--centered">
         <div className="card card--over" aria-label={`ניקוד: ${score}`}>
-          {newBest && (
-            <div className="over__best" aria-label="שיא חדש">
-              🏆
+          {trophy && (
+            <div className="trophy" aria-label="גביע">
+              <span className="trophy__rays" aria-hidden />
+              <span className="trophy__emoji">{trophy}</span>
             </div>
           )}
 
-          <div className="over__score">
-            <span className="over__star" aria-hidden>
-              ⭐
-            </span>
-            <span className="over__points">{score}</span>
-          </div>
-
-          <div className="over__stars" aria-hidden>
+          <div className="over__stars" aria-label={`${stars} כוכבים`}>
             {[0, 1, 2].map((i) => (
               <span key={i} className={`over__slot${i < stars ? " over__slot--on" : ""}`}>
                 ⭐
               </span>
             ))}
+          </div>
+
+          <div className="over__score">
+            <span className="over__star" aria-hidden>
+              {newBest ? "🏆" : "⭐"}
+            </span>
+            <span className="over__points">{score}</span>
           </div>
 
           {sticker?.kind === "new" && (

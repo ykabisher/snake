@@ -251,71 +251,64 @@ button:focus-visible {
 }
 
 /* ------------------------------------------------------------------ *
- * level trail — current world, stars to the next one, next world
+ * route trail — the worlds of this run, a slot per answer, the trophy
  * ------------------------------------------------------------------ */
 .trail {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 6px;
   min-height: 40px;
 }
 .trail__world {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 36px;
-  padding: 0 11px 0 9px;
+  height: 34px;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.22);
   border: 2px solid rgba(255, 255, 255, 0.12);
-}
-.trail__world b {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 400;
+  transition: background 0.3s, opacity 0.3s;
 }
 .trail__world--here {
   background: var(--world-ring);
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: rgba(255, 255, 255, 0.4);
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.25);
+  transform: scale(1.08);
 }
 .trail__world--next {
-  opacity: 0.6;
+  opacity: 0.55;
   filter: saturate(0.6);
 }
+.trail__world--goal {
+  padding: 0 7px;
+  background: rgba(255, 211, 77, 0.18);
+}
 .trail__icon {
-  font-size: 20px;
+  font-size: 19px;
   line-height: 1;
 }
 .trail__pips {
   display: flex;
-  gap: 6px;
+  gap: 3px;
 }
 .trail__pip {
-  width: 26px;
-  height: 26px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
-  display: grid;
-  place-items: center;
-  font-size: 17px;
-  line-height: 1;
+  border: 2px dashed rgba(255, 255, 255, 0.35);
 }
 .trail__pip--on {
   border: 0;
-  background: rgba(255, 211, 77, 0.2);
+  background: radial-gradient(circle at 35% 35%, #fff3b0, var(--marigold) 70%);
+  box-shadow: 0 0 6px rgba(255, 211, 77, 0.8);
   animation: pip-pop 0.5s cubic-bezier(0.3, 1.8, 0.5, 1);
 }
 @keyframes pip-pop {
-  0% { transform: scale(0.2) rotate(-60deg); }
-  100% { transform: scale(1) rotate(0); }
-}
-.trail__arrow {
-  font-size: 18px;
-  color: var(--ink-soft);
-  opacity: 0.6;
+  0% { transform: scale(0.2); }
+  100% { transform: scale(1); }
 }
 
 /* the eaten answer flying up into the banner */
@@ -341,7 +334,7 @@ button:focus-visible {
  * ------------------------------------------------------------------ */
 /* The board sits right under the question, so eyes jump between the two as
  * little as possible; spare height on tall phones falls below it, where a
- * thumb can swipe without covering the board. */
+ * finger can steer from below without covering the board. */
 .board {
   flex: 1 1 auto;
   min-height: 0;
@@ -359,13 +352,13 @@ button:focus-visible {
     0 0 40px 6px color-mix(in srgb, var(--world-glow) 70%, transparent);
   touch-action: none;
 }
-/* the whole play area takes swipes, so the page must not scroll or zoom under a finger */
+/* the whole play area follows the finger, so the page must not scroll or zoom under it */
 .app {
   touch-action: none;
 }
 
 /* ------------------------------------------------------------------ *
- * control hints — keyboard on desktop, swipe on touch
+ * control hints — mouse and keyboard on desktop, a finger on touch
  * ------------------------------------------------------------------ */
 .kbd-hint,
 .swipe-hint {
@@ -381,18 +374,20 @@ button:focus-visible {
   font-size: 34px;
   animation: hint-fade 9s ease forwards;
 }
-/* a finger swiping side to side, then up and down — no words needed */
+/* a finger drawing a lazy loop — the snake follows wherever it goes */
 .swipe-hint__hand {
   display: inline-block;
-  animation: swipe-demo 2.4s ease-in-out infinite;
+  animation: swipe-demo 2.4s linear infinite;
 }
 @keyframes swipe-demo {
-  0%, 100% { transform: translate(0, 0); }
-  20% { transform: translate(-40px, 0); }
-  40% { transform: translate(40px, 0); }
-  55% { transform: translate(0, 0); }
-  70% { transform: translate(0, -18px); }
-  85% { transform: translate(0, 10px); }
+  0%, 100% { transform: translate(36px, 0); }
+  12.5% { transform: translate(25px, -12px); }
+  25% { transform: translate(0, -17px); }
+  37.5% { transform: translate(-25px, -12px); }
+  50% { transform: translate(-36px, 0); }
+  62.5% { transform: translate(-25px, 12px); }
+  75% { transform: translate(0, 17px); }
+  87.5% { transform: translate(25px, 12px); }
 }
 @keyframes hint-fade {
   0%, 70% { opacity: 0.75; }
@@ -582,19 +577,17 @@ button:focus-visible {
   gap: 10px;
 }
 .pill {
+  min-height: 58px;
   padding: 8px 4px 9px;
   border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 2px;
 }
-.pill__world {
-  font-size: 32px;
-  line-height: 1.1;
-}
 .pill__stars {
-  font-size: 13px;
+  font-size: 20px;
   letter-spacing: 1px;
   line-height: 1;
 }
@@ -684,14 +677,35 @@ button:focus-visible {
   gap: 16px;
   padding: 26px 18px 22px;
 }
-.over__best {
-  font-size: 60px;
+/* the journey's prize: a trophy spinning in over turning sun rays */
+.trophy {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: grid;
+  place-items: center;
+}
+.trophy__rays {
+  position: absolute;
+  inset: -26px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(255, 211, 77, 0.4) 0 12deg, transparent 12deg 30deg);
+  -webkit-mask-image: radial-gradient(circle, #000 25%, transparent 70%);
+  mask-image: radial-gradient(circle, #000 25%, transparent 70%);
+  animation: rays 9s linear infinite;
+}
+@keyframes rays {
+  to { transform: rotate(360deg); }
+}
+.trophy__emoji {
+  position: relative;
+  font-size: 92px;
   line-height: 1;
-  filter: drop-shadow(0 0 16px rgba(245, 165, 36, 0.8));
-  animation: trophy 0.9s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  filter: drop-shadow(0 0 18px rgba(245, 165, 36, 0.9));
+  animation: trophy 1s 0.15s cubic-bezier(0.3, 1.6, 0.5, 1) both;
 }
 @keyframes trophy {
-  0% { transform: scale(0) rotate(-40deg); }
+  0% { transform: scale(0) rotate(-200deg); }
   100% { transform: scale(1) rotate(0); }
 }
 .over__score {
@@ -701,12 +715,12 @@ button:focus-visible {
   direction: ltr;
 }
 .over__star {
-  font-size: 50px;
+  font-size: 38px;
   line-height: 1;
 }
 .over__points {
   font-family: var(--font-display);
-  font-size: 88px;
+  font-size: 64px;
   line-height: 1;
   color: var(--marigold);
   font-variant-numeric: tabular-nums;
@@ -793,18 +807,19 @@ button:focus-visible {
 }
 
 /* ------------------------------------------------------------------ *
- * stickers — the game-over prize and the album
+ * stickers and trophies — the finish prizes and the album
  * ------------------------------------------------------------------ */
 .prize {
+  margin: 4px 0 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 .prize__sticker {
-  font-size: 64px;
+  font-size: 50px;
   line-height: 1.1;
-  width: 110px;
-  height: 110px;
+  width: 84px;
+  height: 84px;
   display: grid;
   place-items: center;
   border-radius: 28px;
@@ -862,6 +877,26 @@ button:focus-visible {
 .sticker:nth-child(even) {
   transform: rotate(4deg);
 }
+.album-page--shelf {
+  background: linear-gradient(180deg, var(--pine-800), color-mix(in srgb, var(--marigold) 18%, var(--pine-800)));
+}
+.shelf-trophy {
+  position: relative;
+  background: radial-gradient(circle at 40% 30%, #fff8d6, #ffe08a);
+}
+.shelf-trophy__count {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  direction: ltr;
+  color: #3b2405;
+  background: var(--marigold);
+  transform: rotate(4deg);
+}
 /* not collected yet: a dark silhouette on an empty slot */
 .sticker--missing {
   background: rgba(0, 0, 0, 0.25);
@@ -907,8 +942,8 @@ button:focus-visible {
   .icon-btn { width: 48px; height: 48px; font-size: 26px; }
   .stat { min-width: 64px; height: 48px; }
   .trail { min-height: 32px; }
-  .trail__world { height: 30px; }
-  .trail__pip { width: 22px; height: 22px; font-size: 14px; }
+  .trail__world { height: 28px; }
+  .trail__pip { width: 11px; height: 11px; }
   .sheet--centered { padding-top: 4vh; }
 }
 @media (prefers-reduced-motion: reduce) {

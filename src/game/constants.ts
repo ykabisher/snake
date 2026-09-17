@@ -1,20 +1,68 @@
 /** Board and pacing constants. Tune the feel of the game from here. */
 
-/** Cells per side. The board is always square. */
+/**
+ * Board units per side. The board is always square, and one unit is about the
+ * snake's width — every distance below is in these units.
+ */
 export const GRID = 15;
 
-/** Starting snake length. */
-export const START_LENGTH = 4;
+/* ---------------------------------------------------------------- *
+ * The snake
+ * ---------------------------------------------------------------- */
+
+/** Starting snake length, in segments. */
+export const START_LENGTH = 5;
 
 /** Never let the snake shrink below this. */
 export const MIN_LENGTH = 3;
 
 /**
- * Never let the snake grow past this — one board-width. A long tail is what
- * makes the game hard to survive, and for a six-year-old it should stay
- * playable however well the run goes.
+ * Never let the snake grow past this. A long tail crowds the board, and for a
+ * six-year-old it should stay easy to steer however well the run goes.
  */
 export const MAX_LENGTH = 15;
+
+/** Distance between body segments along the path the head travelled. */
+export const SEGMENT_GAP = 0.75;
+
+/** The head's collision circle — against obstacles and the board edge. */
+export const HEAD_RADIUS = 0.42;
+
+/** How close the head has to get to a pod to eat it. */
+export const EAT_RADIUS = 0.78;
+
+/* ---------------------------------------------------------------- *
+ * Steering and speed
+ * ---------------------------------------------------------------- */
+
+/** Units per second at level 1 with no answers yet. */
+export const BASE_SPEED = 3.1;
+
+/** Each level and each correct answer adds this much speed. */
+export const SPEED_PER_LEVEL = 0.16;
+export const SPEED_PER_CORRECT = 0.02;
+
+/** Fastest the snake is ever allowed to glide. */
+export const MAX_SPEED = 5;
+
+/**
+ * How fast the head can swing toward the finger, in radians per second. With
+ * the speeds above the tightest circle is about a unit and a half across — small
+ * enough to loop around anything, wide enough that the body reads as a curve.
+ */
+export const TURN_RATE = 6.5;
+
+/**
+ * Once the head reaches the finger it stops steering and glides on, until it
+ * is this far past — then it swings back. A finger held still gets a loop
+ * around it instead of a tight knot.
+ */
+export const AIM_ARRIVE = 0.55;
+export const AIM_OVERSHOOT = 1.7;
+
+/* ---------------------------------------------------------------- *
+ * Answers
+ * ---------------------------------------------------------------- */
 
 /** Segments lost when a wrong pod is eaten. */
 export const WRONG_SHRINK = 2;
@@ -25,31 +73,34 @@ export const WRONG_PENALTY = 3;
 /** Wrong answers in a row before the game eases the level back down. */
 export const LEVEL_DOWN_STREAK = 2;
 
-/** ms per step at level 1 with no answers yet — bigger is slower. */
-export const BASE_STEP_MS = 300;
+/**
+ * Distance ahead of the head (in a narrow cone) kept free of new pods, so the
+ * player is never forced into a wrong answer.
+ */
+export const SAFE_LANE = 3.5;
 
-/** Each level and each correct answer shaves this much off the step time. */
-export const STEP_MS_PER_LEVEL = 16;
-export const STEP_MS_PER_CORRECT = 1;
-
-/** Fastest the snake is ever allowed to move. */
-export const MIN_STEP_MS = 130;
-
-/** Turns that can be buffered ahead, so fast double-taps register. */
-export const INPUT_BUFFER = 2;
+/* ---------------------------------------------------------------- *
+ * The board
+ * ---------------------------------------------------------------- */
 
 /**
- * While a turn is waiting, the snake glides into the next cell this many times
- * faster, so a swipe takes effect almost at once instead of waiting out a
- * whole step. Bigger feels snappier; 1 turns it off.
+ * The narrowest gap left between two obstacles, or an obstacle and the edge.
+ * Wider than the head, so every open spot on the board can always be reached.
  */
-export const TURN_HURRY = 2.6;
+export const PASSAGE = 1.5;
 
-/** Cells directly ahead of the head kept free of pods, so nothing is a trap. */
-export const SAFE_LANE = 3;
+/** Seconds before bumping the same way makes another "bonk". */
+export const BUMP_COOLDOWN = 0.6;
 
-/** Score thresholds for the game-over stars. */
-export const STAR_THRESHOLDS = [180, 400] as const;
+/* ---------------------------------------------------------------- *
+ * The journey
+ * ---------------------------------------------------------------- */
 
-/** Completed units (solved equations / finished words) a run needs to earn a sticker. */
-export const STICKER_MIN_COMPLETED = 1;
+/** Worlds a run travels through, picked at random without repeats. */
+export const WORLDS_PER_RUN = 3;
+
+/** Completed units (solved equations / finished words) to leave a world. */
+export const UNITS_PER_WORLD = 3;
+
+/** Stars at the finish: at most [0] mistakes earns 3, at most [1] earns 2, else 1. */
+export const STAR_MISTAKES = [1, 4] as const;

@@ -196,13 +196,13 @@ function sparkle(delay: number): void {
 
 /**
  * The built-in sound of every cue, used when no file overrides it. Everything
- * is major-key, round and soft — the player is six, so even "wrong" and
- * "game over" are cartoon sounds, never harsh buzzers.
+ * is major-key, round and soft — the player is six, so even "wrong" and a
+ * bump are cartoon sounds, never harsh buzzers.
  */
 const synth = {
   /** a bubble pop */
   tap: () => voice({ freq: 600, to: 1300, dur: 0.07, vol: 0.12 }),
-  /** a tiny, quiet swish — confirms a swipe was heard, without nagging */
+  /** a tiny, quiet swish — the finger touched down and the snake is coming */
   turn: () => voice({ freq: 520, to: 880, dur: 0.06, vol: 0.035 }),
   /** a whoosh up, then ding-ding */
   start: () => {
@@ -229,8 +229,8 @@ const synth = {
     );
     sparkle(0.34);
   },
-  /** a fast climbing power-up into a shimmering chord */
-  levelUp: () => {
+  /** a fast climbing power-up into a shimmering chord — arriving in a new world */
+  world: () => {
     [72, 76, 79, 84, 88, 91, 96].forEach((m, i) =>
       voice({ freq: note(m), dur: 0.1, type: "square", vol: 0.05, delay: i * 0.05, cutoff: 3000 }),
     );
@@ -239,27 +239,26 @@ const synth = {
     );
     sparkle(0.36);
   },
-  /** two soft falling notes — "that's okay", not "you failed" */
-  levelDown: () => {
-    voice({ freq: note(76), to: note(72), dur: 0.3, vol: 0.09 });
-    voice({ freq: note(72), to: note(67), dur: 0.45, vol: 0.08, delay: 0.22 });
+  /** a rubbery "boing" — bumped into an obstacle, nothing lost */
+  bonk: () => {
+    noise(0.05, 0.08, 500);
+    voice({ freq: 330, to: 170, dur: 0.18, type: "triangle", vol: 0.1, vibrato: 14 });
   },
-  /** a soft "wah-wah-wah-waaah" */
-  gameOver: () => {
-    [67, 66, 65].forEach((m, i) =>
-      voice({ freq: note(m), dur: 0.3, type: "sawtooth", vol: 0.09, delay: i * 0.32, hold: 0.15, cutoff: 1100 }),
+  /** a soft bubbly whoosh — rolled onto a terrain patch */
+  zone: () => {
+    voice({ freq: 300, to: 620, dur: 0.16, vol: 0.05 });
+    voice({ freq: 450, to: 900, dur: 0.12, vol: 0.03, delay: 0.06 });
+  },
+  /** the journey is done: a fanfare climbing into a big held chord */
+  win: () => {
+    [60, 64, 67, 72].forEach((m, i) =>
+      voice({ freq: note(m), dur: 0.16, type: "square", vol: 0.05, delay: i * 0.11, cutoff: 2600 }),
     );
-    voice({
-      freq: note(64),
-      to: note(62),
-      dur: 0.9,
-      type: "sawtooth",
-      vol: 0.09,
-      delay: 0.96,
-      hold: 0.4,
-      vibrato: 6,
-      cutoff: 1100,
-    });
+    [72, 76, 79, 84].forEach((m) =>
+      voice({ freq: note(m), dur: 1.3, type: "triangle", vol: 0.06, delay: 0.46, hold: 0.6, vibrato: 4 }),
+    );
+    [84, 88, 91, 96].forEach((m, i) => bell(note(m), 0.5 + i * 0.09, 0.08));
+    sparkle(0.9);
   },
 };
 
@@ -278,9 +277,10 @@ export const sfx: Record<Cue, () => void> = {
   correct: () => play("correct"),
   wrong: () => play("wrong"),
   complete: () => play("complete"),
-  levelUp: () => play("levelUp"),
-  levelDown: () => play("levelDown"),
-  gameOver: () => play("gameOver"),
+  world: () => play("world"),
+  bonk: () => play("bonk"),
+  zone: () => play("zone"),
+  win: () => play("win"),
   tap: () => play("tap"),
   turn: () => play("turn"),
 };
